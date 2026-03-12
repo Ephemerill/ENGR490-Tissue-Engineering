@@ -11,8 +11,6 @@ try:
     from rich.table import Table
     from rich.prompt import IntPrompt
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
-    from rich.align import Align
-    from rich.text import Text
 except ImportError:
     print("The 'rich' library is missing! Please run 'pip3 install rich' in your terminal.")
     exit()
@@ -39,8 +37,7 @@ PRESSURIZE_SPEED = 400
 
 def display_header():
     """Prints a beautifully formatted header and configuration table."""
-    title = Text("G-Code Translator by Gabriel Losh", style="bold magenta", justify="center")
-    console.print(Panel(title, border_style="cyan"))
+    console.print(Panel("[bold magenta]G-Code Translator by Gabriel[/bold magenta]", border_style="cyan", expand=False))
 
     # Build Configuration Table
     config_table = Table(show_header=True, header_style="bold yellow", expand=True)
@@ -282,19 +279,20 @@ def main():
                 if g == 3 and not full_circle:
                     l = 2 * math.pi * radius - l 
             
-            # Calculate Extrusion
-            if coordinate_type == 1: 
-                if extruder == 0:
-                    e = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
-                else:
-                    e = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
-                netExtrude += e
-            elif coordinate_type == 0: 
-                if extruder == 0:
-                    e = e1 + (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
-                else:
-                    e = e1 + (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
-                netExtrude += e
+            # --- CORRECTED EXTRUSION MATH ---
+            # Calculate the incremental chunk for this specific move
+            if extruder == 0:
+                chunk = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
+            else:
+                chunk = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
+            
+            # Apply chunk to coordinates and running total
+            if coordinate_type == 1: # relative
+                e = chunk
+            elif coordinate_type == 0: # absolute
+                e = e1 + chunk
+            
+            netExtrude += chunk
 
             # Build the modified G-code line
             write_line = ""
@@ -308,7 +306,6 @@ def main():
             if z is not None: write_line += ' Z' + str(z)
             if a is not None: write_line += ' A' + str(a)
             
-            # Smart Extrusion Axis replacement
             if e is not None and g != 0:
                 write_line += f' {EXTRUSION_AXIS}' + str(round(e, 3))
             
@@ -317,11 +314,10 @@ def main():
             # Override if 'NO E' is in the original line comment
             if 'NO E' in original_line:
                 f_new.write(original_line)
-                undo_val = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
+                # Undo the increment since no extrusion actually happened
                 if coordinate_type == 0:
-                    e -= undo_val
-                else:
-                    netExtrude -= undo_val
+                    e -= chunk
+                netExtrude -= chunk
             else:
                 f_new.write(write_line + "\n")
 
@@ -348,7 +344,7 @@ def main():
     # Success Panel
     success_text = f"Total Extrusion Distance: [bold yellow]{round(netExtrude, 3)} mm[/bold yellow]\nEstimated Volume: [bold yellow]{round(netVol, 3)} mL[/bold yellow]"
     console.print()
-    console.print(Panel(success_text, title="[bold green]Translation Complete! 🎉", border_style="green", expand=False))
+    console.print(Panel(success_text, title="[bold green]Translation Complete[/bold green]", border_style="green", expand=False))
 
     # Open file automatically
     if platform.system() == 'Darwin':       # macOS
