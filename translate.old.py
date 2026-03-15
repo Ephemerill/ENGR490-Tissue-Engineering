@@ -22,11 +22,11 @@ console = Console()
 # ==========================================
 COORDINATE_MODE = "G90"         # 'G90' for Absolute, 'G91' for Relative
 EXTRUSION_AXIS = "B"            # The target axis for extrusion ('B' or 'C')
-Z_SYRINGE_DIAMETER = 4.9       # Inner diameter in mm (4.9 for 1mL BD syringe)
+Z_SYRINGE_DIAMETER = 4.9        # Inner diameter in mm (4.9 for 1mL BD syringe)
 A_SYRINGE_DIAMETER = 4.9
-Z_NOZZLE_DIAMETER = 2           # Nozzle diameter in mm Way too 
+Z_NOZZLE_DIAMETER = 2         # Nozzle diameter in mm Way too 
 A_NOZZLE_DIAMETER = 0.2
-EXTRUSION_COEFFICIENT = 0.33    # Scaling factor for extrusion
+EXTRUSION_COEFFICIENT = 1.0     # Scaling factor for extrusion
 
 # Auto-Pressurization Settings
 DO_AUTO_PRESSURIZE = True
@@ -124,9 +124,7 @@ def main():
         f_new.write("; Auto-pressurize syringe\n")
         f_new.write(f"G1 {EXTRUSION_AXIS}{PRESSURIZE_AMOUNT} F{PRESSURIZE_SPEED}\n\n")
 
-    # Initialize tracking variables. e1 tracks output E, e1_orig tracks slicer's E
     x1, y1, e1, a1, z1 = 0, 0, 0, 0, 0
-    e1_orig = 0 
 
     # ---------------------------------------------------------
     # --- PROCESSING LOOP WITH FUN ANIMATION ---
@@ -159,7 +157,6 @@ def main():
             # 3. Handle G92 resets
             if 'G92 E0' in stripped_line or f'G92 {EXTRUSION_AXIS}0' in stripped_line:
                 x1, y1, e1, a1, z1 = 0, 0, 0, 0, 0
-                e1_orig = 0
 
             # 4. Skip/copy lines that are empty or comments
             if not stripped_line or stripped_line.startswith(';') or 'G90' in stripped_line or 'G91' in stripped_line or 'G92' in stripped_line or 'G21' in stripped_line or 'G4' in stripped_line:
@@ -232,6 +229,7 @@ def main():
             f = letters['F']
 
             l = 0
+            e = None
             
             x_val = x if x is not None else 0
             y_val = y if y is not None else 0
@@ -280,45 +278,19 @@ def main():
                     l = 2 * math.pi * radius - l 
             
             # --- CORRECTED EXTRUSION MATH ---
-            original_e = letters['E']
-            
-            if original_e is None:
-                # Travel move - no extrusion intended
-                chunk = 0
+            # Calculate the incremental chunk for this specific move
+            if extruder == 0:
+                chunk = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
             else:
-                # Differentiate between extrusions and retractions
-                if coordinate_type == 1: # Relative E
-                    e_change = original_e
-                else: # Absolute E
-                    e_change = original_e - e1_orig
-                
-                if e_change == 0:
-                    chunk = 0
-                else:
-                    if l > 0:
-                        # Standard printing move
-                        if extruder == 0:
-                            chunk = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
-                        else:
-                            chunk = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
-                        
-                        # Make sure retractions remain retractions
-                        if e_change < 0:
-                            chunk = -chunk
-                    else:
-                        # Stationary move (pure prime or retract without X/Y/Z movement)
-                        chunk = e_change
+                chunk = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
             
             # Apply chunk to coordinates and running total
-            if original_e is not None:
-                if coordinate_type == 1: # relative
-                    e = chunk
-                elif coordinate_type == 0: # absolute
-                    e = e1 + chunk
-                netExtrude += chunk
-                e1_orig = original_e
-            else:
-                e = None
+            if coordinate_type == 1: # relative
+                e = chunk
+            elif coordinate_type == 0: # absolute
+                e = e1 + chunk
+            
+            netExtrude += chunk
 
             # Build the modified G-code line
             write_line = ""
@@ -341,10 +313,9 @@ def main():
             if 'NO E' in original_line:
                 f_new.write(original_line)
                 # Undo the increment since no extrusion actually happened
-                if original_e is not None:
-                    if coordinate_type == 0:
-                        e -= chunk
-                    netExtrude -= chunk
+                if coordinate_type == 0:
+                    e -= chunk
+                netExtrude -= chunk
             else:
                 f_new.write(write_line + "\n")
 
