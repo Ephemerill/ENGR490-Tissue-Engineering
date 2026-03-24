@@ -53,7 +53,7 @@ EXTRUSION_COEFFICIENT = 0.33    # Scaling factor for extrusion
 # Auto-Pressurization Settings
 DO_AUTO_PRESSURIZE = True
 PRESSURIZE_AMOUNT = 0.2
-PRESSURIZE_SPEED = 400
+PRESSURIZE_SPEED = 300          # Capped at 300
 
 # Jog Settings
 JOG_DISTANCE = 0.2              # Distance in mm per keystroke tick
@@ -76,14 +76,14 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⢀⣀⣄⡀⠰⠴⣶⣶⣤⣤⡀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣿⣿⣿⣿⣿⡇⠀⢀⣤⣶⣻⣾⣿⣴⣴⣾⣿⣿⣿⣿⣿⣿⡆
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣥⣾⠿⢿⣿⣽⣾⣿⣿⣿⣿⣿⣿⣿⠿⢿⡿⣧
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚   ____  _____   _____         
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⣤⡴⠂⠐⠒⢨⣿⣿⣿⣿⣿⣿⣤⣆⣤⣠⣴⣾⣿⣷⡿⠋⠁⠀⠀⠀⠀⠀⠐⣁⠎⠀⡘  / __ \|  __ \ / ____|  /\    
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    ____  _____  _____         
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⣤⡴⠂⠐⠒⢨⣿⣿⣿⣿⣿⣿⣤⣆⣤⣠⣴⣾⣿⣷⡿⠋⠁⠀⠀⠀⠀⠀⠐⣁⠎⠀⡘  / __ \|  __ \ / ____|   /\   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⣠⣤⣶⣾⣿⣿⣿⣿⣿⣆⡀⡀⣀⣨⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⠀⠀⡐⠀ | |  | | |__) | |       /  \   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠄⠀⠄⠀⠀⠀⠀⠀⠂⠀⠀ | |  | |  _  /| |      / /\ \  
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.10[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.12[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -187,9 +187,9 @@ def interactive_jog_menu():
     mode_str = "[bold green]HIGH (Instant Stop, Choppy)[/bold green]" if HIGH_PRECISION_JOG else "[bold yellow]LOW (Smooth Glide, Slight Coast)[/bold yellow]"
     
     console.print(Panel(
-        f"[bold cyan]Interactive Jog Control[/bold cyan]\n"
-        f"Precision Mode: {mode_str}\n\n"
-        f"Hold keys to jog the printer smoothly. Commands are sent at F{JOG_SPEED_MM_MIN} in {JOG_DISTANCE}mm chunks.\n"
+        f"[bold cyan]Adjust Printer[/bold cyan]\n"
+        f"Precision Mode: {mode_str}\n\n" 
+        f"Hold keys to move the printer smoothly. Commands are sent at F{JOG_SPEED_MM_MIN} in {JOG_DISTANCE}mm chunks.\n"
         "You can press multiple keys at once for diagonal movement!\n\n"
         " [bold yellow]W[/bold yellow] : +Y    [bold yellow]S[/bold yellow] : -Y\n"
         " [bold yellow]A[/bold yellow] : -X    [bold yellow]D[/bold yellow] : +X\n"
@@ -314,6 +314,7 @@ def manual_control_menu():
     console.print(Panel(
         "[bold cyan]Manual G-Code Terminal[/bold cyan]\n"
         "Type your G-Code commands and press Enter.\n"
+        "Movement commands (G0/G1) default to F300 if no speed is specified.\n"
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.", 
         border_style="cyan"
     ))
@@ -327,8 +328,17 @@ def manual_control_menu():
         if not cmd.strip():
             continue
             
+        cmd_upper = cmd.upper().strip()
+        
+        # Auto-append F300 for G0/G1 if no F parameter is specified
+        parts = cmd_upper.split()
+        if parts and (parts[0] == "G0" or parts[0] == "G1"):
+            has_f = any(part.startswith("F") for part in parts)
+            if not has_f:
+                cmd_upper += " F300"
+                
         try:
-            printer_conn.write((cmd.upper() + '\n').encode('utf-8'))
+            printer_conn.write((cmd_upper + '\n').encode('utf-8'))
             
             response_lines = []
             while True:
@@ -413,11 +423,11 @@ def translate_gcode():
 
     f_new.write("; --- Center Bed & Clear Dish Sequence ---\n")
     f_new.write("G90 ; Force absolute positioning for setup\n")
-    f_new.write("G92 X0 Y0 Z0 ; Zero at confirmed bottom-left corner\n")
+    f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero at confirmed bottom-left corner and zero extrusion axis\n")
     f_new.write("G1 Z30 F300 ; Z-hop up 30mm to clear dish walls\n")
     f_new.write("G1 X50 Y50 F300 ; Move to the center\n")
     f_new.write("G1 Z0 F300 ; Drop back down to original height before printing\n")
-    f_new.write("G92 X0 Y0 Z0 ; Re-zero all axes at the center\n")
+    f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Re-zero all axes at the center\n")
     
     if COORDINATE_MODE == "G91":
         f_new.write("G91 ; Restore relative positioning\n")
@@ -425,7 +435,11 @@ def translate_gcode():
 
     if DO_AUTO_PRESSURIZE:
         f_new.write("; Auto-pressurize syringe\n")
-        f_new.write(f"G1 {EXTRUSION_AXIS}{PRESSURIZE_AMOUNT} F{PRESSURIZE_SPEED}\n\n")
+        f_new.write("G91 ; Switch to relative positioning for pressurize\n")
+        f_new.write(f"G1 {EXTRUSION_AXIS}{PRESSURIZE_AMOUNT} F{PRESSURIZE_SPEED}\n")
+        if COORDINATE_MODE == "G90":
+            f_new.write("G90 ; Switch back to absolute positioning\n")
+        f_new.write(f"G92 {EXTRUSION_AXIS}0 ; Re-zero the extrusion axis after pressurizing\n\n")
 
     x1, y1, e1, a1, z1 = 0, 0, 0, 0, 0
     e1_orig = 0 
@@ -461,7 +475,13 @@ def translate_gcode():
                 if ('G90' in stripped_line or 'G91' in stripped_line) and "G9" in original_line[:3]:
                     progress.advance(task)
                     continue
-                f_new.write(original_line)
+                
+                # Catch G92 E0 and translate E to our EXTRUSION_AXIS
+                if 'G92' in stripped_line and 'E' in stripped_line:
+                    f_new.write(original_line.replace('E', EXTRUSION_AXIS))
+                else:
+                    f_new.write(original_line)
+                    
                 progress.advance(task)
                 continue
 
@@ -578,7 +598,12 @@ def translate_gcode():
                         else: chunk = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
                         if e_change < 0: chunk = -chunk
                     else:
-                        chunk = e_change
+                        # Scale pure extrusion moves (like primes and retractions) 
+                        FILAMENT_DIAMETER = 1.75
+                        if extruder == 0:
+                            chunk = e_change * (FILAMENT_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
+                        else:
+                            chunk = e_change * (FILAMENT_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
             
             if original_e is not None:
                 if coordinate_type == 1: e = chunk
@@ -619,13 +644,16 @@ def translate_gcode():
 
     if DO_AUTO_PRESSURIZE:
         f_new.write(f"\n; Auto-depressurize syringe\n")
+        f_new.write("G91 ; Switch to relative positioning for depressurize\n")
         f_new.write(f"G1 {EXTRUSION_AXIS}{-PRESSURIZE_AMOUNT} F{PRESSURIZE_SPEED}\n")
+        if COORDINATE_MODE == "G90":
+            f_new.write("G90 ; Switch back to absolute positioning\n")
 
     f_new.write("\n; --- End of Print Sequence ---\n")
     f_new.write("G91 ; Switch to relative positioning\n")
     f_new.write("G1 Z30 F300 ; Lift nozzle 30mm to safely clear the print\n")
     f_new.write("G90 ; Switch back to absolute positioning\n")
-    f_new.write("G1 X-50 Y-50 F800 ; Park the bed back at the original bottom-left edge\n")
+    f_new.write("G1 X-50 Y-50 F300 ; Park the bed back at the original bottom-left edge\n")
     f_new.write("; -----------------------------\n")
 
     f_new.close()
@@ -683,8 +711,14 @@ def check_for_pause(progress):
     if sys.stdin in select.select([sys.stdin], [], [], 0.0)[0]:
         sys.stdin.readline() 
         
+        # Instantly freeze the printer's current movement using feedrate override
+        try:
+            printer_conn.write(b"M220 S0\n")
+        except serial.SerialException:
+            pass
+
         progress.stop()
-        console.print("\n[bold yellow]⚠️  PRINT PAUSED[/bold yellow]")
+        console.print("\n[bold yellow]PRINT PAUSED[/bold yellow]")
         
         action = Prompt.ask(
             "[bold cyan]Choose an action:[/bold cyan] [bold green](r)esume[/bold green] or [bold red](s)top[/bold red]", 
@@ -695,15 +729,22 @@ def check_for_pause(progress):
         if action == 's':
             console.print("[bold red]Cancelling print and parking bed...[/bold red]")
             try:
+                printer_conn.write(b"M410\n")         # Quick Stop: Drops all buffered moves
+                time.sleep(0.5)
+                printer_conn.write(b"M220 S100\n")    # Restore normal speed 
                 printer_conn.write(b"G91\n")
                 printer_conn.write(b"G1 Z30 F300\n")
                 printer_conn.write(b"G90\n")
-                printer_conn.write(b"G1 X-50 Y-50 F800\n")
+                printer_conn.write(b"G1 X-50 Y-50 F300\n")
             except Exception as e:
                 console.print(f"[dim]Failed to send park command: {e}[/dim]")
             return True 
         else:
             console.print("[bold green]Resuming print...[/bold green]")
+            try:
+                printer_conn.write(b"M220 S100\n")    # Restore normal speed
+            except serial.SerialException:
+                pass
             progress.start()
             return False 
             
@@ -741,7 +782,7 @@ def print_file():
 
     console.print(Panel(
         f"[bold yellow]Starting print: {os.path.basename(loaded_filepath)}[/bold yellow]\n"
-        f"[bold cyan]💡 Tip: Press ENTER at any time to PAUSE the print.[/bold cyan]"
+        f"[bold cyan]Press ENTER to PAUSE the print.[/bold cyan]"
     ))
     
     with Progress(
@@ -802,7 +843,29 @@ def print_file():
             command_sent = False
             progress.advance(task)
 
-    if not print_aborted and i >= len(lines):
+        # Fix 2: Force synchronization at the very end of the file so we don't declare success early
+        if not print_aborted and i >= len(lines):
+            progress.update(task, description="[cyan]Finishing buffered moves in printer hardware...")
+            try:
+                printer_conn.write(b"M400\n")
+                waiting_for_ok = True
+                while waiting_for_ok:
+                    if check_for_pause(progress):
+                        print_aborted = True
+                        break
+                        
+                    if printer_conn.in_waiting > 0:
+                        try:
+                            response = printer_conn.readline().decode('utf-8').strip()
+                            if response == 'ok' or response.startswith('ok'):
+                                waiting_for_ok = False
+                        except serial.SerialException:
+                            break
+                    time.sleep(0.01)
+            except Exception:
+                pass
+
+    if not print_aborted:
         console.print("\n[bold green]Print completed successfully![/bold green]")
         time.sleep(2)
     else:
@@ -834,7 +897,7 @@ def main():
             
         if printer_conn:
             console.print("[5] [bold cyan]Manual G-Code Terminal[/bold cyan]")
-            console.print("[6] [bold cyan]Interactive Jog Control[/bold cyan]")
+            console.print("[6] [bold cyan]Adjust Printer[/bold cyan]")
             valid_choices.extend(["5", "6"])
         else:
             console.print("[5] [dim]Manual G-Code Terminal (Requires Connection)[/dim]")
