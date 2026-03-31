@@ -46,7 +46,7 @@ COORDINATE_MODE = "G90"         # 'G90' for Absolute, 'G91' for Relative
 EXTRUSION_AXIS = "B"            # The target axis for extrusion ('B' or 'C')
 Z_SYRINGE_DIAMETER = 4.9        # Inner diameter in mm (4.9 for 1mL BD syringe)
 A_SYRINGE_DIAMETER = 4.9
-Z_NOZZLE_DIAMETER = 0.2         # Nozzle diameter in mm
+Z_NOZZLE_DIAMETER = 2         # Nozzle diameter in mm
 A_NOZZLE_DIAMETER = 0.2
 EXTRUSION_COEFFICIENT = 0.33    # Scaling factor for extrusion
 
