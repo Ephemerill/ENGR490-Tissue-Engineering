@@ -60,6 +60,9 @@ JOG_DISTANCE = 0.2              # Distance in mm per keystroke tick
 JOG_SPEED_MM_MIN = 300          # The F-value for jogging speed
 HIGH_PRECISION_JOG = True       # Start in high precision mode
 
+# Bed Origin Settings
+START_FROM_CENTER = False       # If True, expects bed to start in center, skipping init travel
+
 # Serial Connection Settings
 BAUD_RATE = 115200
 # ==========================================
@@ -94,7 +97,7 @@ def display_header():
     console.print(splash, style="bold white")
 
 def settings_menu():
-    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE, HIGH_PRECISION_JOG
+    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE, HIGH_PRECISION_JOG, START_FROM_CENTER
     
     while True:
         console.clear()
@@ -110,7 +113,7 @@ def settings_menu():
         config_table.add_row("Z Syringe (mm)", str(Z_SYRINGE_DIAMETER), "A Syringe (mm)", str(A_SYRINGE_DIAMETER))
         config_table.add_row("Z Nozzle (mm)", str(Z_NOZZLE_DIAMETER), "A Nozzle (mm)", str(A_NOZZLE_DIAMETER))
         config_table.add_row("Extrusion Coeff.", str(EXTRUSION_COEFFICIENT), "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]")
-        config_table.add_row("Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]", "", "")
+        config_table.add_row("Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]", "Start from Center", "[green]ON[/green]" if START_FROM_CENTER else "[red]OFF[/red]")
         
         console.print(config_table)
         console.print("\n[bold yellow]--- Options Menu ---[/bold yellow]")
@@ -118,9 +121,10 @@ def settings_menu():
         console.print("[2] Toggle Auto-Pressurize")
         console.print("[3] Toggle Coordinate Mode (G90/G91)")
         console.print("[4] Toggle Jog Precision Mode")
-        console.print("[5] Return to Main Menu\n")
+        console.print("[5] Toggle Start from Center")
+        console.print("[6] Return to Main Menu\n")
         
-        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5"])
+        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5", "6"])
         
         if choice == "1":
             new_coeff = Prompt.ask("Enter new Extrusion Coefficient", default=str(EXTRUSION_COEFFICIENT))
@@ -136,6 +140,8 @@ def settings_menu():
         elif choice == "4":
             HIGH_PRECISION_JOG = not HIGH_PRECISION_JOG
         elif choice == "5":
+            START_FROM_CENTER = not START_FROM_CENTER
+        elif choice == "6":
             break
 
 def connect_to_printer():
@@ -421,13 +427,17 @@ def translate_gcode():
     f_new = open(output_filepath, "w+t")
     f_new.write(COORDINATE_MODE + "\n")
 
-    f_new.write("; --- Center Bed & Clear Dish Sequence ---\n")
+    f_new.write("; --- Initialization Sequence ---\n")
     f_new.write("G90 ; Force absolute positioning for setup\n")
-    f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero at confirmed bottom-left corner and zero extrusion axis\n")
-    f_new.write("G1 Z30 F300 ; Z-hop up 30mm to clear dish walls\n")
-    f_new.write("G1 X50 Y50 F300 ; Move to the center\n")
-    f_new.write("G1 Z0 F300 ; Drop back down to original height before printing\n")
-    f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Re-zero all axes at the center\n")
+    
+    if START_FROM_CENTER:
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the current center position\n")
+    else:
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero at confirmed bottom-left corner and zero extrusion axis\n")
+        f_new.write("G1 Z30 F300 ; Z-hop up 30mm to clear dish walls\n")
+        f_new.write("G1 X50 Y50 F300 ; Move to the center\n")
+        f_new.write("G1 Z0 F300 ; Drop back down to original height before printing\n")
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Re-zero all axes at the center\n")
     
     if COORDINATE_MODE == "G91":
         f_new.write("G91 ; Restore relative positioning\n")
@@ -653,7 +663,10 @@ def translate_gcode():
     f_new.write("G91 ; Switch to relative positioning\n")
     f_new.write("G1 Z30 F300 ; Lift nozzle 30mm to safely clear the print\n")
     f_new.write("G90 ; Switch back to absolute positioning\n")
-    f_new.write("G1 X-50 Y-50 F300 ; Park the bed back at the original bottom-left edge\n")
+    if START_FROM_CENTER:
+        f_new.write("G1 X0 Y0 F300 ; Park the bed back at the center\n")
+    else:
+        f_new.write("G1 X-50 Y-50 F300 ; Park the bed back at the original bottom-left edge\n")
     f_new.write("; -----------------------------\n")
 
     f_new.close()
@@ -735,7 +748,11 @@ def check_for_pause(progress):
                 printer_conn.write(b"G91\n")
                 printer_conn.write(b"G1 Z30 F300\n")
                 printer_conn.write(b"G90\n")
-                printer_conn.write(b"G1 X-50 Y-50 F300\n")
+                
+                if START_FROM_CENTER:
+                    printer_conn.write(b"G1 X0 Y0 F300\n")
+                else:
+                    printer_conn.write(b"G1 X-50 Y-50 F300\n")
             except Exception as e:
                 console.print(f"[dim]Failed to send park command: {e}[/dim]")
             return True 
@@ -764,8 +781,16 @@ def print_file():
         return
 
     console.print()
-    console.print(Panel("[bold yellow]ACTION REQUIRED: Please move the bed to the far bottom left corner before continuing.[/bold yellow]", border_style="yellow"))
-    ready = Prompt.ask("Is the bed in the bottom left position?", choices=["y", "n"], default="y")
+    
+    if START_FROM_CENTER:
+        warning_text = "ACTION REQUIRED: Please move the bed to the CENTER before continuing."
+        prompt_text = "Is the bed in the center position?"
+    else:
+        warning_text = "ACTION REQUIRED: Please move the bed to the far bottom left corner before continuing."
+        prompt_text = "Is the bed in the bottom left position?"
+        
+    console.print(Panel(f"[bold yellow]{warning_text}[/bold yellow]", border_style="yellow"))
+    ready = Prompt.ask(prompt_text, choices=["y", "n"], default="y")
     
     if ready.lower() != 'y':
         console.print("[bold red]Print cancelled.[/bold red]")
@@ -871,6 +896,35 @@ def print_file():
     else:
         time.sleep(2)
 
+def update_orca():
+    global printer_conn
+    console.print(Panel("[bold cyan]Fetching latest updates from GitHub...[/bold cyan]", border_style="cyan"))
+    try:
+        result = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
+        console.print("[bold green]Successfully pulled latest changes![/bold green]")
+        if result.stdout.strip():
+            console.print(f"[dim]{result.stdout.strip()}[/dim]")
+        
+        if "Already up to date." in result.stdout:
+            time.sleep(2)
+            return
+
+        console.print("\n[bold yellow]Restarting ORCA to apply updates...[/bold yellow]")
+        time.sleep(2)
+        
+        if printer_conn:
+            printer_conn.close()
+            
+        os.execl(sys.executable, sys.executable, *sys.argv)
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Failed to update from GitHub.[/bold red]")
+        if e.stderr:
+            console.print(f"[dim]{e.stderr.strip()}[/dim]")
+        time.sleep(3)
+    except Exception as e:
+        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        time.sleep(3)
+
 def main():
     while True:
         console.clear()
@@ -887,7 +941,7 @@ def main():
         console.print("[2] Translate G-Code")
         console.print("[3] Load Translated File")
         
-        valid_choices = ["1", "2", "3", "7", "8"]
+        valid_choices = ["1", "2", "3", "7", "8", "9"]
         
         if printer_conn and loaded_filepath:
             console.print("[4] [bold green]Print Loaded File[/bold green]")
@@ -904,7 +958,8 @@ def main():
             console.print("[6] [dim]Interactive Jog Control (Requires Connection)[/dim]")
             
         console.print("[7] Options / Settings")
-        console.print("[8] Exit\n")
+        console.print("[8] Update ORCA from GitHub")
+        console.print("[9] Exit\n")
 
         valid_choices.sort()
 
@@ -928,6 +983,8 @@ def main():
         elif choice == "7":
             settings_menu()
         elif choice == "8":
+            update_orca()
+        elif choice == "9":
             if printer_conn:
                 printer_conn.close()
             console.print("[bold magenta]Goodbye![/bold magenta]")
