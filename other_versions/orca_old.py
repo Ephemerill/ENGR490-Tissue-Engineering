@@ -4,16 +4,10 @@ import platform
 import subprocess
 import time
 import sys
-import re
+import select
+import tty
+import termios
 from datetime import datetime
-
-# Platform-specific imports for terminal control
-if sys.platform == 'win32':
-    import msvcrt
-else:
-    import select
-    import tty
-    import termios
 
 # Import Rich
 try:
@@ -24,7 +18,7 @@ try:
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 except ImportError:
     print("Please install the 'rich' library: pip install rich")
-    sys.exit()
+    exit()
 
 # Import pyserial for printer communication
 try:
@@ -32,16 +26,15 @@ try:
     import serial.tools.list_ports
 except ImportError:
     print("Please install the 'pyserial' library: pip install pyserial")
-    sys.exit()
+    exit()
 
 # Import pynput for raw keyboard hardware monitoring
 try:
     from pynput import keyboard
 except ImportError:
     print("Please install the 'pynput' library: pip install pynput")
-    if sys.platform != 'win32':
-        print("(Note for Mac users: You may need to grant your terminal Accessibility permissions in System Settings)")
-    sys.exit()
+    print("(Note for Mac users: You may need to grant your terminal Accessibility permissions in System Settings)")
+    exit()
 
 # Initialize the Rich Console
 console = Console()
@@ -53,13 +46,13 @@ COORDINATE_MODE = "G90"         # 'G90' for Absolute, 'G91' for Relative
 EXTRUSION_AXIS = "B"            # The target axis for extrusion ('B' or 'C')
 Z_SYRINGE_DIAMETER = 4.9        # Inner diameter in mm (4.9 for 1mL BD syringe)
 A_SYRINGE_DIAMETER = 4.9
-Z_NOZZLE_DIAMETER = 2           # Nozzle diameter in mm
+Z_NOZZLE_DIAMETER = 0.5         # Nozzle diameter in mm
 A_NOZZLE_DIAMETER = 0.2
-EXTRUSION_COEFFICIENT = 0.33    # Scaling factor for extrusion
+EXTRUSION_COEFFICIENT = 5    # Scaling factor for extrusion
 
 # Auto-Pressurization Settings
 DO_AUTO_PRESSURIZE = True
-PRESSURIZE_AMOUNT = 0.2
+PRESSURIZE_AMOUNT = 5
 PRESSURIZE_SPEED = 300          # Capped at 300
 
 # Jog Settings
@@ -68,7 +61,7 @@ JOG_SPEED_MM_MIN = 300          # The F-value for jogging speed
 HIGH_PRECISION_JOG = True       # Start in high precision mode
 
 # Bed Origin Settings
-START_FROM_CENTER = False       # If True, expects bed to start in center, skipping init travel
+START_FROM_CENTER = True       # If True, expects bed to start in center, skipping init travel
 
 # Serial Connection Settings
 BAUD_RATE = 115200
@@ -93,7 +86,7 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.15[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.12[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -154,12 +147,6 @@ def settings_menu():
 def connect_to_printer():
     global printer_conn
     
-    if printer_conn and printer_conn.is_open:
-        try:
-            printer_conn.close()
-        except Exception:
-            pass
-            
     ports = serial.tools.list_ports.comports()
     if not ports:
         console.print("[bold red]No serial ports found. Make sure the printer is plugged in.[/bold red]")
@@ -182,59 +169,15 @@ def connect_to_printer():
     try:
         with console.status(f"[bold green]Connecting to {selected_port} at {BAUD_RATE} baud...", spinner="dots"):
             printer_conn = serial.Serial(selected_port, BAUD_RATE, timeout=2)
-            
-            # HARDWARE RESET: Toggling DTR tells the 3D printer board to reset its serial state
-            printer_conn.setDTR(False)
-            time.sleep(0.05)
-            printer_conn.setDTR(True)
-            
-            # Clear any garbage leftover in the OS buffers
-            printer_conn.reset_input_buffer()
-            printer_conn.reset_output_buffer()
-            
-            # Send wake up pings
-            printer_conn.write(b"\n\n")
+            printer_conn.write(b"\r\n\r\n")
             time.sleep(2)
-            printer_conn.reset_input_buffer()
-            
+            printer_conn.flushInput()
             console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
             time.sleep(1)
     except Exception as e:
         console.print(f"[bold red]Failed to connect: {e}[/bold red]")
         printer_conn = None
         time.sleep(2)
-
-def reset_printer_board():
-    """Forces a hard reboot and serial flush for the printer to clear hangs."""
-    global printer_conn
-    
-    if not printer_conn:
-        console.print("[bold red]Printer not connected! Cannot send reset signal.[/bold red]")
-        time.sleep(1.5)
-        return
-        
-    console.print("[bold yellow]Sending reset signals to printer board...[/bold yellow]")
-    try:
-        # 1. Software Reset (Clear Marlin Halt States)
-        printer_conn.write(b"M112\n") # Emergency Stop
-        time.sleep(0.1)
-        printer_conn.write(b"M999\n") # Restart from halt
-        
-        # 2. Hardware Reset (Toggle DTR to restart the microcontroller)
-        printer_conn.setDTR(False)
-        time.sleep(0.5)
-        printer_conn.setDTR(True)
-        
-        # 3. Flush OS Serial Buffers
-        printer_conn.reset_input_buffer()
-        printer_conn.reset_output_buffer()
-        
-        console.print("[bold green]Printer board reset successfully! Give it a few seconds to boot up.[/bold green]")
-        time.sleep(2)
-    except Exception as e:
-        console.print(f"[bold red]Failed to reset: {e}[/bold red]")
-        console.print("[yellow]Tip: If macOS has completely locked the port, physically unplug the USB cable and plug it back in.[/yellow]")
-        time.sleep(3)
 
 def interactive_jog_menu():
     global printer_conn, HIGH_PRECISION_JOG
@@ -263,17 +206,14 @@ def interactive_jog_menu():
         border_style="cyan"
     ))
     
-    printer_conn.reset_input_buffer()
+    # Set to relative mode for jogging
     printer_conn.write(b"G91\n")
     
-    # --- TERMINAL BLINDFOLDING (Cross-Platform) ---
-    is_windows = sys.platform == 'win32'
-    if not is_windows:
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        new_settings = termios.tcgetattr(fd)
-        new_settings[3] = new_settings[3] & ~termios.ECHO & ~termios.ICANON
-        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+    # --- TERMINAL BLINDFOLDING ---
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    new_settings = termios.tcgetattr(fd)
+    new_settings[3] = new_settings[3] & ~termios.ECHO & ~termios.ICANON
     
     active_keys = set()
     exit_flag = False
@@ -307,35 +247,27 @@ def interactive_jog_menu():
     listener.start()
     
     try:
+        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+        
         in_flight_commands = 0
-        last_command_time = time.time()
         
         while not exit_flag:
-            # Clear Windows terminal input buffer so keys don't print
-            if is_windows:
-                while msvcrt.kbhit():
-                    msvcrt.getch()
-                    
-            # FAILSAFE: If the script gets "stuck" waiting for an 'ok' for more than 0.5 seconds, 
-            # assume the 'ok' was lost to line noise. Break the lock and flush the buffer.
-            if in_flight_commands > 0 and (time.time() - last_command_time) > 0.5:
-                in_flight_commands = 0
-                printer_conn.reset_input_buffer()
-
             while printer_conn.in_waiting > 0:
                 try:
-                    # errors='ignore' prevents crashes from random electrical noise bytes
-                    resp = printer_conn.readline().decode('utf-8', errors='ignore').strip()
-                    if 'ok' in resp.lower():
+                    resp = printer_conn.readline().decode('utf-8').strip()
+                    if resp == 'ok' or resp.startswith('ok'):
                         in_flight_commands = max(0, in_flight_commands - 1)
-                except Exception:
+                except serial.SerialException:
                     pass
 
+            # High Precision allows 0 buffered commands (must finish M400 physically)
+            # Low Precision allows 1 buffered command (sliding window for blending)
             limit = 0 if HIGH_PRECISION_JOG else 1
             
             if in_flight_commands <= limit and active_keys:
                 dx, dy, dz, de = 0.0, 0.0, 0.0, 0.0
                 
+                # W and S swapped based on your request
                 if 'w' in active_keys: dy += JOG_DISTANCE
                 if 's' in active_keys: dy -= JOG_DISTANCE
                 if 'a' in active_keys: dx -= JOG_DISTANCE
@@ -360,17 +292,14 @@ def interactive_jog_menu():
                     else:
                         printer_conn.write(cmd.encode('utf-8'))
                         in_flight_commands += 1
-                        
-                    last_command_time = time.time()
                 else:
                     time.sleep(0.005) 
             else:
                 time.sleep(0.005) 
     finally:
         listener.stop()
-        if not is_windows:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            termios.tcflush(fd, termios.TCIFLUSH)
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        termios.tcflush(fd, termios.TCIFLUSH)
         
     printer_conn.write(b"G90\n")
     
@@ -391,14 +320,10 @@ def manual_control_menu():
     console.print(Panel(
         "[bold cyan]Manual G-Code Terminal[/bold cyan]\n"
         "Type your G-Code commands and press Enter.\n"
-        "Movement commands (G0/G1) default to F300 if no speed is specified.\n\n"
-        "[bold yellow]TIP:[/bold yellow] If movements like 'G1 X0.2' aren't doing anything, the printer is likely in Absolute Mode.\n"
-        "Send [bold green]G91[/bold green] to switch to Relative Mode, then try your move again.\n\n"
+        "Movement commands (G0/G1) default to F300 if no speed is specified.\n"
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.", 
         border_style="cyan"
     ))
-    
-    printer_conn.reset_input_buffer()
     
     while True:
         cmd = Prompt.ask("[bold green]>[/bold green]")
@@ -409,37 +334,24 @@ def manual_control_menu():
         if not cmd.strip():
             continue
             
-        # --- ROBUSTNESS UPGRADES ---
-        # 1. Replace macOS smart dashes and unicode minus signs with a standard ASCII hyphen
-        cmd_clean = re.sub(r'[–—−]', '-', cmd)
+        cmd_upper = cmd.upper().strip()
         
-        # 2. Remove accidental spaces between axis letters and their values (e.g., "X -5" -> "X-5")
-        cmd_clean = re.sub(r'([A-Z])\s+([-\.0-9])', r'\1\2', cmd_clean, flags=re.IGNORECASE)
-        
-        cmd_upper = cmd_clean.upper().strip()
-        
-        if cmd_upper.startswith("G0") or cmd_upper.startswith("G1"):
-            if "F" not in cmd_upper:
+        # Auto-append F300 for G0/G1 if no F parameter is specified
+        parts = cmd_upper.split()
+        if parts and (parts[0] == "G0" or parts[0] == "G1"):
+            has_f = any(part.startswith("F") for part in parts)
+            if not has_f:
                 cmd_upper += " F300"
                 
         try:
-            # Force ASCII encoding to prevent any remaining weird unicode from reaching Marlin
-            printer_conn.write((cmd_upper + '\n').encode('ascii', errors='ignore'))
+            printer_conn.write((cmd_upper + '\n').encode('utf-8'))
             
             response_lines = []
-            start_wait = time.time()
-            
             while True:
-                # Failsafe timeout for manual commands so it doesn't hang forever
-                if time.time() - start_wait > 5.0:
-                    console.print("[dim yellow]Warning: Printer didn't respond with 'ok' within 5 seconds.[/dim yellow]")
-                    break
-                    
-                response = printer_conn.readline().decode('utf-8', errors='ignore').strip()
+                response = printer_conn.readline().decode('utf-8').strip()
                 if response:
                     response_lines.append(response)
-                    # More forgiving detection of 'ok'
-                    if 'ok' in response.lower():
+                    if response == 'ok' or response.startswith('ok'):
                         break
                 else:
                     break
@@ -772,20 +684,46 @@ def translate_gcode():
         console.print(f"[bold green]Loaded {output_filename}![/bold green]")
         time.sleep(1)
 
-def check_for_pause(progress):
-    pause_requested = False
-    
-    # Cross-Platform keyboard polling
-    if sys.platform == 'win32':
-        if msvcrt.kbhit():
-            msvcrt.getch() # Clear the buffer
-            pause_requested = True
-    else:
-        if sys.stdin in select.select([sys.stdin], [], [], 0.0)[0]:
-            sys.stdin.readline() 
-            pause_requested = True
+def load_file_menu():
+    global loaded_filepath
+    out_dir = "translated_gcode"
 
-    if pause_requested:
+    os.makedirs(out_dir, exist_ok=True)
+    valid_extensions = ('.gcode', '.txt')
+    files = [f for f in os.listdir(out_dir) if f.lower().endswith(valid_extensions)]
+
+    if not files:
+        console.print(Panel(f"[bold red]No files found in '{out_dir}'. Please translate a file first.[/bold red]"))
+        time.sleep(2)
+        return
+
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(out_dir, x)), reverse=True)
+
+    file_table = Table(show_header=True, header_style="bold green", title="[bold cyan]Translated Files")
+    file_table.add_column("#", justify="right", style="cyan", no_wrap=True)
+    file_table.add_column("Filename", style="magenta")
+    file_table.add_column("Last Modified", justify="right", style="green")
+
+    for i, f in enumerate(files):
+        mtime = os.path.getmtime(os.path.join(out_dir, f))
+        dt_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+        file_table.add_row(str(i + 1), f, dt_str)
+
+    console.print(file_table)
+    console.print(f"[0] Cancel")
+
+    choice = IntPrompt.ask("\n[bold yellow]Select a file to load[/bold yellow]", choices=[str(i) for i in range(len(files) + 1)])
+    if choice == 0: return
+
+    selected_file = files[choice - 1]
+    loaded_filepath = os.path.join(out_dir, selected_file)
+    console.print(f"[bold green]Successfully loaded {selected_file}![/bold green]")
+    time.sleep(1)
+
+def check_for_pause(progress):
+    if sys.stdin in select.select([sys.stdin], [], [], 0.0)[0]:
+        sys.stdin.readline() 
+        
         # Instantly freeze the printer's current movement using feedrate override
         try:
             printer_conn.write(b"M220 S0\n")
@@ -806,7 +744,6 @@ def check_for_pause(progress):
             try:
                 printer_conn.write(b"M410\n")         # Quick Stop: Drops all buffered moves
                 time.sleep(0.5)
-                printer_conn.reset_input_buffer()     # Clear buffers on stop
                 printer_conn.write(b"M220 S100\n")    # Restore normal speed 
                 printer_conn.write(b"G91\n")
                 printer_conn.write(b"G1 Z30 F300\n")
@@ -829,11 +766,6 @@ def check_for_pause(progress):
             return False 
             
     return False
-
-def load_file_menu():
-    # Placeholder so option 3 doesn't crash your script
-    console.print("[bold yellow]Function 'load_file_menu' is not defined in the snippet provided.[/bold yellow]")
-    time.sleep(1.5)
 
 def print_file():
     global printer_conn, loaded_filepath
@@ -878,8 +810,6 @@ def print_file():
         f"[bold cyan]Press ENTER to PAUSE the print.[/bold cyan]"
     ))
     
-    printer_conn.reset_input_buffer()
-    
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -922,8 +852,8 @@ def print_file():
                         
                     if printer_conn.in_waiting > 0:
                         try:
-                            response = printer_conn.readline().decode('utf-8', errors='ignore').strip()
-                            if 'ok' in response.lower():
+                            response = printer_conn.readline().decode('utf-8').strip()
+                            if response == 'ok' or response.startswith('ok'):
                                 waiting_for_ok = False
                         except serial.SerialException:
                             console.print("[bold red]Serial connection lost during print![/bold red]")
@@ -938,6 +868,7 @@ def print_file():
             command_sent = False
             progress.advance(task)
 
+        # Fix 2: Force synchronization at the very end of the file so we don't declare success early
         if not print_aborted and i >= len(lines):
             progress.update(task, description="[cyan]Finishing buffered moves in printer hardware...")
             try:
@@ -950,8 +881,8 @@ def print_file():
                         
                     if printer_conn.in_waiting > 0:
                         try:
-                            response = printer_conn.readline().decode('utf-8', errors='ignore').strip()
-                            if 'ok' in response.lower():
+                            response = printer_conn.readline().decode('utf-8').strip()
+                            if response == 'ok' or response.startswith('ok'):
                                 waiting_for_ok = False
                         except serial.SerialException:
                             break
@@ -982,10 +913,7 @@ def update_orca():
         time.sleep(2)
         
         if printer_conn:
-            try:
-                printer_conn.close()
-            except Exception:
-                pass
+            printer_conn.close()
             
         os.execl(sys.executable, sys.executable, *sys.argv)
     except subprocess.CalledProcessError as e:
@@ -1009,16 +937,11 @@ def main():
         console.print(f"Loaded File:    {file_status}\n")
 
         console.print("[bold yellow]--- Main Menu ---[/bold yellow]")
-        
-        valid_choices = ["1", "2", "3", "7", "8", "9"]
-        
-        if printer_conn:
-            console.print("[0] [bold red]Reset / Reboot Printer Board[/bold red]")
-            valid_choices.append("0")
-            
         console.print("[1] Connect to Printer")
         console.print("[2] Translate G-Code")
         console.print("[3] Load Translated File")
+        
+        valid_choices = ["1", "2", "3", "7", "8", "9"]
         
         if printer_conn and loaded_filepath:
             console.print("[4] [bold green]Print Loaded File[/bold green]")
@@ -1042,9 +965,7 @@ def main():
 
         choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=valid_choices)
 
-        if choice == "0":
-            reset_printer_board()
-        elif choice == "1":
+        if choice == "1":
             connect_to_printer()
         elif choice == "2":
             translate_gcode()
@@ -1065,10 +986,7 @@ def main():
             update_orca()
         elif choice == "9":
             if printer_conn:
-                try:
-                    printer_conn.close()
-                except Exception:
-                    pass
+                printer_conn.close()
             console.print("[bold magenta]Goodbye![/bold magenta]")
             break
 
@@ -1077,8 +995,5 @@ if __name__== "__main__":
         main()
     except KeyboardInterrupt:
         if printer_conn:
-            try:
-                printer_conn.close()
-            except Exception:
-                pass
+            printer_conn.close()
         console.print("\n[bold magenta]Goodbye![/bold magenta]")
