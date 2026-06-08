@@ -60,7 +60,7 @@ JOG_SPEED_MM_MIN = 300          # The F-value for jogging speed
 HIGH_PRECISION_JOG = True       # Start in high precision mode
 
 # Bed Origin Settings
-START_FROM_CENTER = False       # (reserved — currently unused after homing rework)
+START_FROM_CENTER = False       # If True, expects bed to start in center, skipping init travel
 
 # Serial Connection Settings
 BAUD_RATE = 115200
@@ -72,7 +72,6 @@ printer_conn = None
 loaded_filepath = None
 
 printer_lock = threading.Lock()
-printer_homed = False           # True only after a successful G28 this session
 printer_response_queue = queue.Queue()
 
 printer_listener_running = False
@@ -86,14 +85,14 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⢀⣀⣄⡀⠰⠴⣶⣶⣤⣤⡀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣿⣿⣿⣿⣿⡇⠀⢀⣤⣶⣻⣾⣿⣴⣴⣾⣿⣿⣿⣿⣿⣿⡆
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣥⣾⠿⢿⣿⣽⣾⣿⣿⣿⣿⣿⣿⣿⠿⢿⡿⣧
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    ____  _____  _____         
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    __   ____     ____         
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⣤⡴⠂⠐⠒⢨⣿⣿⣿⣿⣿⣿⣤⣆⣤⣠⣴⣾⣿⣷⡿⠋⠁⠀⠀⠀⠀⠀⠐⣁⠎⠀⡘  / __ \|  __ \ / ____|   /\   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⣠⣤⣶⣾⣿⣿⣿⣿⣿⣆⡀⡀⣀⣨⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⠀⠀⡐⠀ | |  | | |__) | |       /  \   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠄⠀⠄⠀⠀⠀⠀⠀⠂⠀⠀ | |  | |  _  /| |      / /\ \  
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.19[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.17[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -131,6 +130,7 @@ def serial_listener():
 # ============================================================
 # --- SAFE COMMAND SENDER ---
 # ============================================================
+
 
 def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
     """
@@ -257,6 +257,7 @@ def settings_menu():
         elif choice == "5":
             break
 
+
 # ============================================================
 # --- CONNECT TO PRINTER ---
 # ============================================================
@@ -327,18 +328,14 @@ def connect_to_printer():
         # the M115 response lines can print cleanly without fighting the spinner)
         send_gcode("M115", timeout=10)
 
-        global printer_homed
-        printer_homed = False   # position reference lost on disconnect/reconnect
         console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
-        console.print("[bold yellow]Note: axes are unhomed. Home before printing or jogging.[/bold yellow]")
-        time.sleep(1.5)
+        time.sleep(1)
 
     except Exception as e:
         console.print(f"[bold red]Failed to connect: {e}[/bold red]")
         printer_conn = None
         printer_listener_running = False
         time.sleep(2)
-
 
 # ============================================================
 # --- RESET PRINTER ---
@@ -374,10 +371,7 @@ def reset_printer_board():
             except queue.Empty:
                 break
 
-        global printer_homed
-        printer_homed = False   # position reference wiped by reset
         console.print("[bold green]Printer reset complete. Give it a moment to finish booting.[/bold green]")
-        console.print("[bold yellow]Note: axes are unhomed. Home before printing or jogging.[/bold yellow]")
         time.sleep(2)
 
     except Exception as e:
@@ -517,7 +511,6 @@ def interactive_jog_menu():
         return "reload"
     return "quit"
 
-
 # ============================================================
 # --- MANUAL G-CODE TERMINAL ---
 # ============================================================
@@ -564,9 +557,6 @@ def manual_control_menu():
             # G28 (home) and G29 (bed levelling) can take minutes; use a longer timeout
             if cmd_upper.startswith("G28") or cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
-                if cmd_upper.startswith("G28"):
-                    global printer_homed
-                    printer_homed = True
             else:
                 send_gcode(cmd_upper)
         except Exception as e:
@@ -659,10 +649,9 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G90 ; Back to absolute before homing\n")
-        f_new.write("G28 ; Sensorless home all axes (StallGuard, configured in firmware)\n")
+        f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
         f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
-        f_new.write("G1 X50 Y67 Z-89.92 F300 ; Move from home to the print start position\n")
+        f_new.write("G1 X50 Y67 Z-90 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
@@ -958,6 +947,7 @@ def translate_gcode():
         console.print(f"[bold green]Loaded {output_filename}![/bold green]")
         time.sleep(1)
 
+
 # ============================================================
 # --- PRINT CONTROLS ---
 # ============================================================
@@ -1007,8 +997,6 @@ def check_for_pause(progress):
                 send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
             except Exception as e:
                 console.print(f"[dim]Failed to send park command: {e}[/dim]")
-            global printer_homed
-            printer_homed = False   # position now uncertain after cancel
             return True
         else:
             console.print("[bold green]Resuming print...[/bold green]")
@@ -1020,7 +1008,6 @@ def check_for_pause(progress):
             return False
 
     return False
-
 
 # ============================================================
 # --- LOAD FILE MENU ---
@@ -1086,13 +1073,12 @@ def load_file_menu():
     console.print(f"\n[bold green]Loaded:[/bold green] [cyan]{selected_file}[/cyan]")
     time.sleep(1.5)
 
-
 # ============================================================
 # --- PRINT FILE ---
 # ============================================================
 
 def print_file():
-    global printer_conn, loaded_filepath, printer_homed
+    global printer_conn, loaded_filepath
 
     if not printer_conn:
         console.print("[bold red]Printer not connected![/bold red]")
@@ -1106,39 +1092,19 @@ def print_file():
 
     console.print()
 
-    if not printer_homed:
-        console.print(Panel(
-            "[bold yellow]AXES UNHOMED[/bold yellow]\n\n"
-            "The printer has not been homed this session. The file will sensorless-home\n"
-            "all axes at the start of the print. Make sure the build area is clear.",
-            border_style="yellow"
-        ))
-        ready = Prompt.ask("Ready to start the print?", choices=["y", "n"], default="y")
-        if ready.lower() != 'y':
-            console.print("[bold red]Print cancelled.[/bold red]")
-            time.sleep(1.5)
-            return
+    # The translated file now begins with G28 sensorless homing, so the bed no
+    # longer needs to be positioned by hand — just make sure it can home safely.
+    warning_text = (
+        "ACTION REQUIRED: The print will begin by sensorless-homing all axes (G28).\n"
+        "Make sure each axis can travel freely to its endstop and the build area is clear."
+    )
+    console.print(Panel(f"[bold yellow]{warning_text}[/bold yellow]", border_style="yellow"))
+    ready = Prompt.ask("Ready to home and start the print?", choices=["y", "n"], default="y")
 
-        console.print("[bold cyan]Preparing to print...[/bold cyan]")
-        try:
-            printer_homed = True
-        except Exception as e:
-            console.print(f"[bold red]Error: {e}[/bold red]")
-            time.sleep(2)
-            return
-    else:
-        # Already homed this session — just confirm the build area is clear
-        console.print(Panel(
-            "[bold yellow]ACTION REQUIRED[/bold yellow]\n\n"
-            "The print will begin by sensorless-homing all axes (G28) as part of the\n"
-            "translated file. Make sure the build area is clear.",
-            border_style="yellow"
-        ))
-        ready = Prompt.ask("Ready to start the print?", choices=["y", "n"], default="y")
-        if ready.lower() != 'y':
-            console.print("[bold red]Print cancelled.[/bold red]")
-            time.sleep(1.5)
-            return
+    if ready.lower() != 'y':
+        console.print("[bold red]Print cancelled.[/bold red]")
+        time.sleep(1.5)
+        return
 
     try:
         with open(loaded_filepath, "r") as file:
@@ -1194,7 +1160,6 @@ def print_file():
                     send_gcode(command)
             except RuntimeError as e:
                 console.print(f"\n[bold red]PRINT FAILED:[/bold red] {e}")
-                printer_homed = False   # position now uncertain after failure
                 print_aborted = True
                 break
             except KeyboardInterrupt:
@@ -1206,7 +1171,6 @@ def print_file():
                     send_gcode("G90", wait_for_ok=False)
                 except Exception:
                     pass
-                printer_homed = False   # position now uncertain after interrupt
                 print_aborted = True
                 break
 
@@ -1223,7 +1187,6 @@ def print_file():
         console.print("\n[bold green]Print completed successfully![/bold green]")
 
     time.sleep(2)
-
 
 # ============================================================
 # --- GITHUB UPDATE ---
@@ -1323,7 +1286,6 @@ def review_settings_before_translation(filename):
             COORDINATE_MODE = "G91" if COORDINATE_MODE == "G90" else "G90"
         elif choice == "5":
             return False
-
 
 # ============================================================
 # --- MAIN MENU ---
