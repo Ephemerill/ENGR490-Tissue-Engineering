@@ -659,8 +659,6 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G91 ; Relative mode for pre-home backoff\n")
-        f_new.write("G1 X0.1 Y0.1 Z0.1 F300 ; Nudge away from MIN home direction to prevent false stall on start\n")
         f_new.write("G90 ; Back to absolute before homing\n")
         f_new.write("G28 ; Sensorless home all axes (StallGuard, configured in firmware)\n")
         f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
@@ -1111,10 +1109,8 @@ def print_file():
     if not printer_homed:
         console.print(Panel(
             "[bold yellow]AXES UNHOMED[/bold yellow]\n\n"
-            "The printer has not been homed this session. A 0.1mm backoff nudge will\n"
-            "be sent on each axis before the print starts to prevent false stall detection\n"
-            "on the G28 at the top of the file.\n\n"
-            "Make sure the build area is clear — the file will sensorless-home all axes.",
+            "The printer has not been homed this session. The file will sensorless-home\n"
+            "all axes at the start of the print. Make sure the build area is clear.",
             border_style="yellow"
         ))
         ready = Prompt.ask("Ready to start the print?", choices=["y", "n"], default="y")
@@ -1123,15 +1119,11 @@ def print_file():
             time.sleep(1.5)
             return
 
-        console.print("[bold cyan]Sending pre-home backoff nudge...[/bold cyan]")
+        console.print("[bold cyan]Preparing to print...[/bold cyan]")
         try:
-            send_gcode("G91")                            # relative mode
-            send_gcode("G1 X0.1 Y0.1 Z0.1 F300")    # nudge away from MIN endstops
-            send_gcode("G90")                            # back to absolute
             printer_homed = True
         except Exception as e:
-            console.print(f"[bold red]Backoff failed: {e}[/bold red]")
-            console.print("[yellow]Print aborted. Check the connection and try again.[/yellow]")
+            console.print(f"[bold red]Error: {e}[/bold red]")
             time.sleep(2)
             return
     else:
