@@ -660,9 +660,9 @@ def translate_gcode():
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
         f_new.write("G91 ; Relative mode for pre-home backoff\n")
-        f_new.write("G1 X-0.1 Y-0.1 Z-0.1 F300 ; Nudge away from MAX home direction to allow for\n")
+        f_new.write("G1 X0.1 Y0.1 Z0.1 F300 ; Nudge away from MIN home direction to prevent false stall on start\n")
         f_new.write("G90 ; Back to absolute before homing\n")
-        f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
+        f_new.write("G28 ; Sensorless home all axes (StallGuard, configured in firmware)\n")
         f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
         f_new.write("G1 X50 Y67 Z-89.92 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
@@ -1126,7 +1126,7 @@ def print_file():
         console.print("[bold cyan]Sending pre-home backoff nudge...[/bold cyan]")
         try:
             send_gcode("G91")                            # relative mode
-            send_gcode("G1 X-0.1 Y-0.1 Z-0.1 F300")    # nudge away from MAX endstops
+            send_gcode("G1 X0.1 Y0.1 Z0.1 F300")    # nudge away from MIN endstops
             send_gcode("G90")                            # back to absolute
             printer_homed = True
         except Exception as e:
