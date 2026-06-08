@@ -93,7 +93,7 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.18[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.19[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -664,7 +664,7 @@ def translate_gcode():
         f_new.write("G90 ; Back to absolute before homing\n")
         f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
         f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
-        f_new.write("G1 X50 Y67 Z-89.90 F300 ; Move from home to the print start position\n")
+        f_new.write("G1 X50 Y67 Z-89.92 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
@@ -1110,29 +1110,28 @@ def print_file():
 
     if not printer_homed:
         console.print(Panel(
-            "[bold red]AXES ARE UNHOMED[/bold red]\n\n"
-            "The printer has been disconnected, reset, or had a print cancelled since the\n"
-            "last successful home. Commanding a move without homing first can drive a motor\n"
-            "past the end of its travel.\n\n"
-            "[bold yellow]A G28 sensorless home will run now before the print starts.[/bold yellow]\n"
-            "Make sure every axis can travel freely to its endstop and the build area is clear.",
-            border_style="red"
+            "[bold yellow]AXES UNHOMED[/bold yellow]\n\n"
+            "The printer has not been homed this session. A 0.1mm backoff nudge will\n"
+            "be sent on each axis before the print starts to prevent false stall detection\n"
+            "on the G28 at the top of the file.\n\n"
+            "Make sure the build area is clear — the file will sensorless-home all axes.",
+            border_style="yellow"
         ))
-        ready = Prompt.ask("Ready to home all axes and start the print?", choices=["y", "n"], default="y")
+        ready = Prompt.ask("Ready to start the print?", choices=["y", "n"], default="y")
         if ready.lower() != 'y':
             console.print("[bold red]Print cancelled.[/bold red]")
             time.sleep(1.5)
             return
 
-        console.print("[bold cyan]Homing all axes...[/bold cyan]")
+        console.print("[bold cyan]Sending pre-home backoff nudge...[/bold cyan]")
         try:
-            send_gcode("G28", timeout=180)
+            send_gcode("G91")                            # relative mode
+            send_gcode("G1 X-0.1 Y-0.1 Z-0.1 F300")    # nudge away from MAX endstops
+            send_gcode("G90")                            # back to absolute
             printer_homed = True
-            console.print("[bold green]Homing complete.[/bold green]")
-            time.sleep(1)
         except Exception as e:
-            console.print(f"[bold red]Homing failed: {e}[/bold red]")
-            console.print("[yellow]Print aborted. Check connections and try again.[/yellow]")
+            console.print(f"[bold red]Backoff failed: {e}[/bold red]")
+            console.print("[yellow]Print aborted. Check the connection and try again.[/yellow]")
             time.sleep(2)
             return
     else:
