@@ -60,7 +60,7 @@ JOG_SPEED_MM_MIN = 300          # The F-value for jogging speed
 HIGH_PRECISION_JOG = True       # Start in high precision mode
 
 # Bed Origin Settings
-START_FROM_CENTER = False       # If True, expects bed to start in center, skipping init travel
+START_FROM_CENTER = False       # (reserved — currently unused after homing rework)
 
 # Serial Connection Settings
 BAUD_RATE = 115200
@@ -72,7 +72,7 @@ printer_conn = None
 loaded_filepath = None
 
 printer_lock = threading.Lock()
-printer_homed = False   # True only after a successful G28 this session
+printer_homed = False           # True only after a successful G28 this session
 printer_response_queue = queue.Queue()
 
 printer_listener_running = False
@@ -86,14 +86,14 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⢀⣀⣄⡀⠰⠴⣶⣶⣤⣤⡀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣿⣿⣿⣿⣿⡇⠀⢀⣤⣶⣻⣾⣿⣴⣴⣾⣿⣿⣿⣿⣿⣿⡆
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣥⣾⠿⢿⣿⣽⣾⣿⣿⣿⣿⣿⣿⣿⠿⢿⡿⣧
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    __   ____     ____         
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    ____  _____  _____         
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⣤⡴⠂⠐⠒⢨⣿⣿⣿⣿⣿⣿⣤⣆⣤⣠⣴⣾⣿⣷⡿⠋⠁⠀⠀⠀⠀⠀⠐⣁⠎⠀⡘  / __ \|  __ \ / ____|   /\   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⣠⣤⣶⣾⣿⣿⣿⣿⣿⣆⡀⡀⣀⣨⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⠀⠀⡐⠀ | |  | | |__) | |       /  \   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠄⠀⠄⠀⠀⠀⠀⠀⠂⠀⠀ | |  | |  _  /| |      / /\ \  
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.17[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.18[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -131,7 +131,6 @@ def serial_listener():
 # ============================================================
 # --- SAFE COMMAND SENDER ---
 # ============================================================
-
 
 def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
     """
@@ -258,7 +257,6 @@ def settings_menu():
         elif choice == "5":
             break
 
-
 # ============================================================
 # --- CONNECT TO PRINTER ---
 # ============================================================
@@ -329,6 +327,7 @@ def connect_to_printer():
         # the M115 response lines can print cleanly without fighting the spinner)
         send_gcode("M115", timeout=10)
 
+        global printer_homed
         printer_homed = False   # position reference lost on disconnect/reconnect
         console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
         console.print("[bold yellow]Note: axes are unhomed. Home before printing or jogging.[/bold yellow]")
@@ -339,6 +338,7 @@ def connect_to_printer():
         printer_conn = None
         printer_listener_running = False
         time.sleep(2)
+
 
 # ============================================================
 # --- RESET PRINTER ---
@@ -374,6 +374,7 @@ def reset_printer_board():
             except queue.Empty:
                 break
 
+        global printer_homed
         printer_homed = False   # position reference wiped by reset
         console.print("[bold green]Printer reset complete. Give it a moment to finish booting.[/bold green]")
         console.print("[bold yellow]Note: axes are unhomed. Home before printing or jogging.[/bold yellow]")
@@ -516,6 +517,7 @@ def interactive_jog_menu():
         return "reload"
     return "quit"
 
+
 # ============================================================
 # --- MANUAL G-CODE TERMINAL ---
 # ============================================================
@@ -563,9 +565,10 @@ def manual_control_menu():
             if cmd_upper.startswith("G28") or cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
                 if cmd_upper.startswith("G28"):
+                    global printer_homed
                     printer_homed = True
-                else:
-                    send_gcode(cmd_upper)
+            else:
+                send_gcode(cmd_upper)
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
 
@@ -957,7 +960,6 @@ def translate_gcode():
         console.print(f"[bold green]Loaded {output_filename}![/bold green]")
         time.sleep(1)
 
-
 # ============================================================
 # --- PRINT CONTROLS ---
 # ============================================================
@@ -996,19 +998,20 @@ def check_for_pause(progress):
         )
 
         if action == 's':
-                console.print("[bold red]Cancelling print and parking...[/bold red]")
-                try:
-                    send_gcode("M410", wait_for_ok=False)
-                    time.sleep(0.5)
-                    send_gcode("M220 S100", wait_for_ok=False)
-                    send_gcode("G91", wait_for_ok=False)
-                    send_gcode("G1 Z30 F300", wait_for_ok=False)
-                    send_gcode("G90", wait_for_ok=False)
-                    send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
-                except Exception as e:
-                    console.print(f"[dim]Failed to send park command: {e}[/dim]")
-                printer_homed = False   # position now uncertain after cancel
-                return True
+            console.print("[bold red]Cancelling print and parking...[/bold red]")
+            try:
+                send_gcode("M410", wait_for_ok=False)
+                time.sleep(0.5)
+                send_gcode("M220 S100", wait_for_ok=False)
+                send_gcode("G91", wait_for_ok=False)
+                send_gcode("G1 Z30 F300", wait_for_ok=False)
+                send_gcode("G90", wait_for_ok=False)
+                send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
+            except Exception as e:
+                console.print(f"[dim]Failed to send park command: {e}[/dim]")
+            global printer_homed
+            printer_homed = False   # position now uncertain after cancel
+            return True
         else:
             console.print("[bold green]Resuming print...[/bold green]")
             try:
@@ -1019,6 +1022,7 @@ def check_for_pause(progress):
             return False
 
     return False
+
 
 # ============================================================
 # --- LOAD FILE MENU ---
@@ -1084,12 +1088,13 @@ def load_file_menu():
     console.print(f"\n[bold green]Loaded:[/bold green] [cyan]{selected_file}[/cyan]")
     time.sleep(1.5)
 
+
 # ============================================================
 # --- PRINT FILE ---
 # ============================================================
 
 def print_file():
-    global printer_conn, loaded_filepath
+    global printer_conn, loaded_filepath, printer_homed
 
     if not printer_conn:
         console.print("[bold red]Printer not connected![/bold red]")
@@ -1102,8 +1107,6 @@ def print_file():
         return
 
     console.print()
-
-    global printer_homed
 
     if not printer_homed:
         console.print(Panel(
@@ -1145,6 +1148,7 @@ def print_file():
             console.print("[bold red]Print cancelled.[/bold red]")
             time.sleep(1.5)
             return
+
     try:
         with open(loaded_filepath, "r") as file:
             lines = file.readlines()
@@ -1228,6 +1232,7 @@ def print_file():
         console.print("\n[bold green]Print completed successfully![/bold green]")
 
     time.sleep(2)
+
 
 # ============================================================
 # --- GITHUB UPDATE ---
@@ -1327,6 +1332,7 @@ def review_settings_before_translation(filename):
             COORDINATE_MODE = "G91" if COORDINATE_MODE == "G90" else "G90"
         elif choice == "5":
             return False
+
 
 # ============================================================
 # --- MAIN MENU ---
