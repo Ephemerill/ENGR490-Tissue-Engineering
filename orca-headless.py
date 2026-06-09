@@ -575,9 +575,15 @@ def manual_control_menu():
                 # G28 Z already works for exactly this reason.)
                 if not axes_specified or 'Z' in axes_specified:
                     send_gcode("G28 Z", timeout=180)
+                    send_gcode("G1 Z-5", timeout=180)
+                    send_gcode("G28 Z", timeout=180)
                 if home_x:
                     send_gcode("G28 X", timeout=180)
+                    send_gcode("G1 X5", timeout=180)
+                    send_gcode("G28 X", timeout=180)
                 if home_y:
+                    send_gcode("G28 Y", timeout=180)
+                    send_gcode("G1 Y5", timeout=180)
                     send_gcode("G28 Y", timeout=180)
 
                 # G28 leaves the firmware in absolute mode; restore the user's mode.
@@ -675,9 +681,18 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G28 Z ; Home Z\n")
-        f_new.write("G28 X ; Home X\n")
-        f_new.write("G28 Y ; Home Y\n")
+        f_new.write("G28 Z ; Home Z (priming pass)\n")
+        f_new.write("G1 Z-5 ; Move Z away from edge") 
+        f_new.write("G28 Z ; Home Z (reliable pass)\n")
+                
+        f_new.write("G28 X ; Home X (priming pass)\n")
+        f_new.write("G1 X5 ; Move Z away from edge") 
+        f_new.write("G28 X ; Home X (reliable pass)\n")
+                    
+        f_new.write("G28 Y ; Home Y (priming pass)\n")
+        f_new.write("G1 Y5 ; Move Z away from edge") 
+        f_new.write("G28 Y ; Home Y (reliable pass)\n")
+        
         f_new.write("G90 ; Ensure absolute positioning after homing\n")
         f_new.write("G91 ; Relative to travel to print start\n")
         f_new.write("G1 X50 Y67 Z-89.2 F300 ; Move from home to the print start position\n")
