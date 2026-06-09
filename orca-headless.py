@@ -534,7 +534,8 @@ def manual_control_menu():
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.",
         border_style="cyan"
     ))
-
+    current_coord_mode = "G90"  # Track coordinate mode for the session
+    
     while True:
         cmd = Prompt.ask("[bold green]>[/bold green]")
 
@@ -553,28 +554,46 @@ def manual_control_menu():
             if "F" not in cmd_upper:
                 cmd_upper += " F300"
 
+        # Track coordinate mode changes so we can restore after homing
+        if cmd_upper == "G91":
+            current_coord_mode = "G91"
+        elif cmd_upper == "G90":
+            current_coord_mode = "G90"
+
         try:
             if cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
             elif cmd_upper.startswith("G28"):
-                # Determine which axes are being homed (default = all if none specified)
                 axes_specified = re.findall(r'[XYZB]', cmd_upper[3:])
+                home_x = not axes_specified or 'X' in axes_specified
                 home_y = not axes_specified or 'Y' in axes_specified
 
+                # Home Z first if needed (no pre-move required)
+                if not axes_specified or 'Z' in axes_specified:
+                    send_gcode("G28 Z", timeout=180)
+                    send_gcode("G90", timeout=5)
+
+                # Home X with nudge-dwell if needed
+                if home_x:
+                    send_gcode("G91", timeout=5)
+                    send_gcode("G1 X1 F300", timeout=10)
+                    send_gcode("G4 P500", timeout=5)
+                    send_gcode("G90", timeout=5)
+                    send_gcode("G28 X", timeout=180)
+                    send_gcode("G90", timeout=5)
+
+                # Home Y with nudge-dwell if needed
                 if home_y:
-                    # Prime Y: nudge away from endstop, dwell, then home
-                    # This clears the TMC2209 DIAG pin stale-stall state
-                    other_axes = [a for a in (axes_specified or ['X', 'Z']) if a != 'Y']
-                    if other_axes:
-                        send_gcode("G28 " + " ".join(other_axes), timeout=180)
                     send_gcode("G91", timeout=5)
                     send_gcode("G1 Y1 F300", timeout=10)
                     send_gcode("G4 P500", timeout=5)
                     send_gcode("G90", timeout=5)
                     send_gcode("G28 Y", timeout=180)
-                    send_gcode("G90", timeout=5)  # Explicitly restore absolute after homing
-                else:
-                    send_gcode(cmd_upper, timeout=180)
+                    send_gcode("G90", timeout=5)
+
+                # Restore whatever coordinate mode the user was in before homing
+                send_gcode(current_coord_mode, timeout=5)
+                console.print(f"[dim]Coordinate mode restored to {current_coord_mode} after homing.[/dim]")
             else:
                 send_gcode(cmd_upper)
         except Exception as e:
