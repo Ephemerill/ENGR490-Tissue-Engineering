@@ -583,8 +583,7 @@ def manual_control_menu():
                     send_gcode("G28 X", timeout=180)
                 if home_y:
                     send_gcode("G28 Y", timeout=180)
-                    send_gcode("G1 Y5", timeout=180)
-                    send_gcode("G28 Y", timeout=180)
+                    send_gcode("G1 Y5", timeout=200)
                     send_gcode("G28 Y", timeout=180)
 
                 # G28 leaves the firmware in absolute mode; restore the user's mode.
