@@ -649,9 +649,10 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
+        f_new.write("G1 X5 Y5 Z-5 ; Prepare for print")
         f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
         f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
-        f_new.write("G1 X50 Y67 Z-90 F300 ; Move from home to the print start position\n")
+        f_new.write("G1 X50 Y67 Z-89 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
