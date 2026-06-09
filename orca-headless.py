@@ -554,9 +554,26 @@ def manual_control_menu():
                 cmd_upper += " F300"
 
         try:
-            # G28 (home) and G29 (bed levelling) can take minutes; use a longer timeout
-            if cmd_upper.startswith("G28") or cmd_upper.startswith("G29"):
+            if cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
+            elif cmd_upper.startswith("G28"):
+                # Determine which axes are being homed (default = all if none specified)
+                axes_specified = re.findall(r'[XYZB]', cmd_upper[3:])
+                home_y = not axes_specified or 'Y' in axes_specified
+
+                if home_y:
+                    # Prime Y: nudge away from endstop, dwell, then home
+                    # This clears the TMC2209 DIAG pin stale-stall state
+                    other_axes = [a for a in (axes_specified or ['X', 'Z']) if a != 'Y']
+                    if other_axes:
+                        send_gcode("G28 " + " ".join(other_axes), timeout=180)
+                    send_gcode("G91", timeout=5)
+                    send_gcode("G1 Y1 F300", timeout=10)
+                    send_gcode("G4 P500", timeout=5)
+                    send_gcode("G90", timeout=5)
+                    send_gcode("G28 Y", timeout=180)
+                else:
+                    send_gcode(cmd_upper, timeout=180)
             else:
                 send_gcode(cmd_upper)
         except Exception as e:
@@ -649,8 +666,13 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
-        f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
+        f_new.write("G28 X Z ; Sensorless home X and Z first\n")
+        f_new.write("G91 ; Relative for Y pre-move\n")
+        f_new.write("G1 Y1 F300 ; Nudge Y away from endstop to clear stale StallGuard state\n")
+        f_new.write("G4 P500 ; Dwell 500ms for TMC2209 DIAG pin to deassert\n")
+        f_new.write("G90 ; Back to absolute\n")
+        f_new.write("G28 Y ; Home Y cleanly on second attempt\n")
+        f_new.write("G91 ; Relative to travel to print start\n")
         f_new.write("G1 X50 Y67 Z-89.90 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
