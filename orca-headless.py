@@ -701,7 +701,7 @@ def translate_gcode():
         
         f_new.write("G90 ; Explicitly restore absolute positioning after homing\n")
         f_new.write("G91 ; Relative to travel to print start\n")
-        f_new.write("G1 X50 Y67 Z-89.90 F300 ; Move from home to the print start position\n")
+        f_new.write("G1 X50 Y67 Z-89.2 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
