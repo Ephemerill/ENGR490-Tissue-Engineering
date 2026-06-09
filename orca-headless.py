@@ -568,30 +568,19 @@ def manual_control_menu():
                 home_x = not axes_specified or 'X' in axes_specified
                 home_y = not axes_specified or 'Y' in axes_specified
 
-                # Home Z first if needed (no pre-move required)
+                # Home each axis with a plain G28 and let the firmware run its
+                # sensorless routine. Do NOT send a G1 nudge before G28 — a move
+                # right before homing disrupts the TMC2209 StallGuard state, so the
+                # home never triggers and the axis runs the full rail. (Plain
+                # G28 Z already works for exactly this reason.)
                 if not axes_specified or 'Z' in axes_specified:
                     send_gcode("G28 Z", timeout=180)
-                    send_gcode("G90", timeout=5)
-
-                # Home X with nudge-dwell if needed
                 if home_x:
-                    send_gcode("G91", timeout=5)
-                    send_gcode("G1 X1 F300", timeout=10)
-                    send_gcode("G4 P500", timeout=5)
-                    send_gcode("G90", timeout=5)
                     send_gcode("G28 X", timeout=180)
-                    send_gcode("G90", timeout=5)
-
-                # Home Y with nudge-dwell if needed
                 if home_y:
-                    send_gcode("G91", timeout=5)
-                    send_gcode("G1 Y1 F300", timeout=10)
-                    send_gcode("G4 P500", timeout=5)
-                    send_gcode("G90", timeout=5)
                     send_gcode("G28 Y", timeout=180)
-                    send_gcode("G90", timeout=5)
 
-                # Restore whatever coordinate mode the user was in before homing
+                # G28 leaves the firmware in absolute mode; restore the user's mode.
                 send_gcode(current_coord_mode, timeout=5)
                 console.print(f"[dim]Coordinate mode restored to {current_coord_mode} after homing.[/dim]")
             else:
@@ -686,20 +675,10 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G28 Z ; Home Z first (no pre-move needed)\n")
-        f_new.write("G91 ; Relative for X pre-move\n")
-        f_new.write("G1 X1 F300 ; Nudge X away from endstop to clear stale StallGuard state\n")
-        f_new.write("G4 P500 ; Dwell 500ms for TMC2209 DIAG pin to deassert\n")
-        f_new.write("G90 ; Back to absolute\n")
-        f_new.write("G28 X ; Home X cleanly\n")
-        f_new.write("G90 ; Explicitly restore absolute after homing\n")
-        f_new.write("G91 ; Relative for Y pre-move\n")
-        f_new.write("G1 Y1 F300 ; Nudge Y away from endstop to clear stale StallGuard state\n")
-        f_new.write("G4 P500 ; Dwell 500ms for TMC2209 DIAG pin to deassert\n")
-        f_new.write("G90 ; Back to absolute\n")
-        f_new.write("G28 Y ; Home Y cleanly\n")
-        
-        f_new.write("G90 ; Explicitly restore absolute positioning after homing\n")
+        f_new.write("G28 Z ; Home Z\n")
+        f_new.write("G28 X ; Home X\n")
+        f_new.write("G28 Y ; Home Y\n")
+        f_new.write("G90 ; Ensure absolute positioning after homing\n")
         f_new.write("G91 ; Relative to travel to print start\n")
         f_new.write("G1 X50 Y67 Z-89.2 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
