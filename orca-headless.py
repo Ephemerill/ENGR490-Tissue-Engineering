@@ -572,6 +572,7 @@ def manual_control_menu():
                     send_gcode("G4 P500", timeout=5)
                     send_gcode("G90", timeout=5)
                     send_gcode("G28 Y", timeout=180)
+                    send_gcode("G90", timeout=5)  # Explicitly restore absolute after homing
                 else:
                     send_gcode(cmd_upper, timeout=180)
             else:
@@ -666,12 +667,20 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G28 X Z ; Sensorless home X and Z first\n")
+        f_new.write("G28 Z ; Home Z first (no pre-move needed)\n")
+        f_new.write("G91 ; Relative for X pre-move\n")
+        f_new.write("G1 X1 F300 ; Nudge X away from endstop to clear stale StallGuard state\n")
+        f_new.write("G4 P500 ; Dwell 500ms for TMC2209 DIAG pin to deassert\n")
+        f_new.write("G90 ; Back to absolute\n")
+        f_new.write("G28 X ; Home X cleanly\n")
+        f_new.write("G90 ; Explicitly restore absolute after homing\n")
         f_new.write("G91 ; Relative for Y pre-move\n")
         f_new.write("G1 Y1 F300 ; Nudge Y away from endstop to clear stale StallGuard state\n")
         f_new.write("G4 P500 ; Dwell 500ms for TMC2209 DIAG pin to deassert\n")
         f_new.write("G90 ; Back to absolute\n")
-        f_new.write("G28 Y ; Home Y cleanly on second attempt\n")
+        f_new.write("G28 Y ; Home Y cleanly\n")
+        
+        f_new.write("G90 ; Explicitly restore absolute positioning after homing\n")
         f_new.write("G91 ; Relative to travel to print start\n")
         f_new.write("G1 X50 Y67 Z-89.90 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
