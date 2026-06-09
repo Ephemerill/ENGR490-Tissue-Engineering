@@ -575,7 +575,7 @@ def manual_control_menu():
                 # G28 Z already works for exactly this reason.)
                 if not axes_specified or 'Z' in axes_specified:
                     send_gcode("G28 Z", timeout=180)
-                    send_gcode("G1 Z-5", timeout=180)
+                    send_gcode("G1 Z5", timeout=180)
                     send_gcode("G28 Z", timeout=180)
                 if home_x:
                     send_gcode("G28 X", timeout=180)
@@ -584,6 +584,7 @@ def manual_control_menu():
                 if home_y:
                     send_gcode("G28 Y", timeout=180)
                     send_gcode("G1 Y5", timeout=180)
+                    send_gcode("G28 Y", timeout=180)
                     send_gcode("G28 Y", timeout=180)
 
                 # G28 leaves the firmware in absolute mode; restore the user's mode.
