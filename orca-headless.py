@@ -385,9 +385,27 @@ def reset_printer_board():
 
     console.print("[bold yellow]Resetting printer board...[/bold yellow]")
     try:
-        send_gcode("M112", wait_for_ok=False)
-        time.sleep(0.5)
+        # Best-effort emergency stop. Write M112 directly (NOT via send_gcode) with
+        # a short write timeout and swallow any error: if the board is hung it isn't
+        # draining its RX buffer, so the write would block and otherwise abort the
+        # reset before the DTR toggle below ever runs. The hardware reset reboots
+        # the board regardless of firmware state, so M112 failing here is harmless.
+        old_wt = printer_conn.write_timeout
+        try:
+            printer_conn.write_timeout = 1
+            with printer_lock:
+                printer_conn.reset_output_buffer()
+                printer_conn.write(b"M112\n")
+                printer_conn.flush()
+        except Exception:
+            pass
+        finally:
+            printer_conn.write_timeout = old_wt
 
+        time.sleep(0.3)
+
+        # Hardware reset via DTR toggle — reboots the board at the hardware level
+        # whatever state the firmware is in. This always runs.
         printer_conn.dtr = False
         time.sleep(1.0)
         printer_conn.dtr = True
