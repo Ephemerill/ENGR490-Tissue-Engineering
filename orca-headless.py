@@ -1,6 +1,5 @@
 import math
 import os
-import subprocess
 import time
 import sys
 import re
@@ -77,6 +76,7 @@ printer_response_queue = queue.Queue()
 printer_listener_running = False
 printer_listener_thread = None
 
+
 def display_header():
     # Show the awesome ASCII splash art on the main menus
     splash = r"""
@@ -92,7 +92,7 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.13[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.18[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -102,14 +102,84 @@ def display_header():
     splash = splash.replace('\u2800', ' ')
     console.print(splash, style="bold white")
 
+
+# ============================================================
+# --- SHARED HELPERS ---
+# ============================================================
+
+def drain_queue():
+    """Empty the response queue so stale boot/echo lines can't trigger false 'ok' hits."""
+    while not printer_response_queue.empty():
+        try:
+            printer_response_queue.get_nowait()
+        except queue.Empty:
+            break
+
+
+def build_config_table(title, include_jog=False):
+    """Build the two-column configuration table shared by Settings and the translation review."""
+    t = Table(show_header=True, header_style="bold yellow", expand=True,
+              title=f"[bold cyan]{title}[/bold cyan]")
+    t.add_column("Parameter")
+    t.add_column("Value", style="cyan")
+    t.add_column("Parameter")
+    t.add_column("Value", style="cyan")
+
+    t.add_row("Coordinate Mode", COORDINATE_MODE, "Extrusion Axis", EXTRUSION_AXIS)
+    t.add_row("Z Syringe (mm)", str(Z_SYRINGE_DIAMETER), "A Syringe (mm)", str(A_SYRINGE_DIAMETER))
+    t.add_row("Z Nozzle (mm)", str(Z_NOZZLE_DIAMETER), "A Nozzle (mm)", str(A_NOZZLE_DIAMETER))
+    t.add_row("Extrusion Coeff.", str(EXTRUSION_COEFFICIENT),
+              "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]")
+    if include_jog:
+        t.add_row("Jog Precision",
+                  "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]", "", "")
+    return t
+
+
+def pick_file(directory, title, show_size=False):
+    """List .gcode/.txt files in a directory (newest first) and return the chosen filename, or None."""
+    valid_extensions = ('.gcode', '.txt')
+    files = [f for f in os.listdir(directory) if f.lower().endswith(valid_extensions)]
+
+    if not files:
+        console.print(Panel(f"[bold red]No files found in '{directory}'.[/bold red]", border_style="red"))
+        time.sleep(2)
+        return None
+
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
+
+    table = Table(show_header=True, header_style="bold green", title=f"[bold cyan]{title}[/bold cyan]")
+    table.add_column("#", justify="right", style="cyan", no_wrap=True)
+    table.add_column("Filename", style="magenta")
+    table.add_column("Last Modified", justify="right", style="green")
+    if show_size:
+        table.add_column("Size", justify="right", style="yellow")
+
+    for i, f in enumerate(files):
+        full = os.path.join(directory, f)
+        dt_str = datetime.fromtimestamp(os.path.getmtime(full)).strftime('%Y-%m-%d %H:%M:%S')
+        if show_size:
+            table.add_row(str(i + 1), f, dt_str, f"{os.path.getsize(full) / 1024:.1f} KB")
+        else:
+            table.add_row(str(i + 1), f, dt_str)
+
+    console.print(table)
+    console.print("[0] Cancel")
+
+    choice = IntPrompt.ask("\n[bold yellow]Select a file[/bold yellow]",
+                           choices=[str(i) for i in range(len(files) + 1)])
+    if choice == 0:
+        return None
+    return files[choice - 1]
+
+
 # ============================================================
 # --- SERIAL LISTENER THREAD ---
 # ============================================================
 
 def serial_listener():
     """Background thread: continuously reads lines from the serial port into a queue."""
-    global printer_listener_running
-    global printer_conn
+    global printer_listener_running, printer_conn
 
     while printer_listener_running:
         try:
@@ -131,12 +201,8 @@ def serial_listener():
 # --- SAFE COMMAND SENDER ---
 # ============================================================
 
-
 def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
-    """
-    Sends a G-code command with retry logic and ok/error/busy/resend handling.
-    Used for all non-interactive serial communication throughout the program.
-    """
+    """Send a G-code command with retry logic and ok/error/busy/resend handling."""
     global printer_conn
 
     if not printer_conn or not printer_conn.is_open:
@@ -146,7 +212,7 @@ def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
     if not command:
         return True
 
-    for attempt in range(retries):
+    for _ in range(retries):
         try:
             with printer_lock:
                 printer_conn.write((command + '\n').encode('utf-8'))
@@ -186,7 +252,7 @@ def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
             if "temporarily unavailable" in str(e).lower():
                 time.sleep(0.1)
                 continue
-            raise e
+            raise
 
         time.sleep(0.25)
 
@@ -198,37 +264,13 @@ def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
 # ============================================================
 
 def settings_menu():
-    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE
-    global HIGH_PRECISION_JOG
+    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE, HIGH_PRECISION_JOG
 
     while True:
         console.clear()
         display_header()
+        console.print(build_config_table("Current Configuration", include_jog=True))
 
-        config_table = Table(
-            show_header=True,
-            header_style="bold yellow",
-            expand=True,
-            title="[bold cyan]Current Configuration[/bold cyan]"
-        )
-        config_table.add_column("Parameter")
-        config_table.add_column("Value", style="cyan")
-        config_table.add_column("Parameter")
-        config_table.add_column("Value", style="cyan")
-
-        config_table.add_row("Coordinate Mode", COORDINATE_MODE, "Extrusion Axis", EXTRUSION_AXIS)
-        config_table.add_row("Z Syringe (mm)", str(Z_SYRINGE_DIAMETER), "A Syringe (mm)", str(A_SYRINGE_DIAMETER))
-        config_table.add_row("Z Nozzle (mm)", str(Z_NOZZLE_DIAMETER), "A Nozzle (mm)", str(A_NOZZLE_DIAMETER))
-        config_table.add_row(
-            "Extrusion Coeff.", str(EXTRUSION_COEFFICIENT),
-            "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]"
-        )
-        config_table.add_row(
-            "Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]",
-            "", ""
-        )
-
-        console.print(config_table)
         console.print("\n[bold yellow]--- Options Menu ---[/bold yellow]")
         console.print("[1] Change Extrusion Coefficient")
         console.print("[2] Toggle Auto-Pressurize")
@@ -236,10 +278,7 @@ def settings_menu():
         console.print("[4] Toggle Jog Precision Mode")
         console.print("[5] Return to Main Menu\n")
 
-        choice = Prompt.ask(
-            "[bold yellow]Choose an option[/bold yellow]",
-            choices=["1", "2", "3", "4", "5"]
-        )
+        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5"])
 
         if choice == "1":
             new_coeff = Prompt.ask("Enter new Extrusion Coefficient", default=str(EXTRUSION_COEFFICIENT))
@@ -263,9 +302,7 @@ def settings_menu():
 # ============================================================
 
 def connect_to_printer():
-    global printer_conn
-    global printer_listener_running
-    global printer_listener_thread
+    global printer_conn, printer_listener_running, printer_listener_thread
 
     # Stop any existing listener and close the old connection
     if printer_conn and printer_conn.is_open:
@@ -288,10 +325,8 @@ def connect_to_printer():
         console.print(f"[{i + 1}] {port.device} - {port.description}")
     console.print("[0] Cancel")
 
-    choice = IntPrompt.ask(
-        "\n[bold yellow]Select the port to connect to[/bold yellow]",
-        choices=[str(i) for i in range(len(ports) + 1)]
-    )
+    choice = IntPrompt.ask("\n[bold yellow]Select the port to connect to[/bold yellow]",
+                           choices=[str(i) for i in range(len(ports) + 1)])
     if choice == 0:
         return
 
@@ -299,12 +334,8 @@ def connect_to_printer():
 
     try:
         with console.status(f"[bold green]Connecting to {selected_port} at {BAUD_RATE} baud...", spinner="dots"):
-
             printer_conn = serial.Serial(
-                selected_port,
-                BAUD_RATE,
-                timeout=1,
-                write_timeout=5,
+                selected_port, BAUD_RATE, timeout=1, write_timeout=5,
                 exclusive=True if sys.platform == "darwin" else None
             )
 
@@ -324,8 +355,9 @@ def connect_to_printer():
             printer_listener_thread = threading.Thread(target=serial_listener, daemon=True)
             printer_listener_thread.start()
 
-        # Wake the printer and confirm firmware identity (outside status context so
-        # the M115 response lines can print cleanly without fighting the spinner)
+        # Clear queued boot text, then confirm firmware identity (outside the status
+        # context so M115 lines can print cleanly without fighting the spinner)
+        drain_queue()
         send_gcode("M115", timeout=10)
 
         console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
@@ -336,6 +368,7 @@ def connect_to_printer():
         printer_conn = None
         printer_listener_running = False
         time.sleep(2)
+
 
 # ============================================================
 # --- RESET PRINTER ---
@@ -362,14 +395,7 @@ def reset_printer_board():
 
         printer_conn.reset_input_buffer()
         printer_conn.reset_output_buffer()
-
-        # Drain stale boot messages from the queue so they don't cause
-        # false 'ok' hits on the next send_gcode call
-        while not printer_response_queue.empty():
-            try:
-                printer_response_queue.get_nowait()
-            except queue.Empty:
-                break
+        drain_queue()  # Discard stale boot messages so they don't fake an 'ok'
 
         console.print("[bold green]Printer reset complete. Give it a moment to finish booting.[/bold green]")
         time.sleep(2)
@@ -395,11 +421,8 @@ def interactive_jog_menu():
     console.clear()
     display_header()
 
-    mode_str = (
-        "[bold green]HIGH (Instant Stop, Choppy)[/bold green]"
-        if HIGH_PRECISION_JOG
-        else "[bold yellow]LOW (Smooth Glide, Slight Coast)[/bold yellow]"
-    )
+    mode_str = ("[bold green]HIGH (Instant Stop, Choppy)[/bold green]" if HIGH_PRECISION_JOG
+                else "[bold yellow]LOW (Smooth Glide, Slight Coast)[/bold yellow]")
 
     console.print(Panel(
         f"[bold cyan]Jog Control[/bold cyan]\n"
@@ -408,13 +431,14 @@ def interactive_jog_menu():
         " [bold yellow]W[/bold yellow] : +Y    [bold yellow]S[/bold yellow] : -Y\n"
         " [bold yellow]A[/bold yellow] : -X    [bold yellow]D[/bold yellow] : +X\n"
         " [bold yellow]R[/bold yellow] : +Z    [bold yellow]F[/bold yellow] : -Z\n"
-        " [bold yellow]T[/bold yellow] : -B    [bold yellow]G[/bold yellow] : +B\n\n"
+        f" [bold yellow]T[/bold yellow] : -{EXTRUSION_AXIS}    [bold yellow]G[/bold yellow] : +{EXTRUSION_AXIS}\n\n"
         "Press [bold magenta]'p'[/bold magenta] to swap between High and Low Precision.\n"
         "Press [bold red]'q'[/bold red] to return to the main menu.",
         border_style="cyan"
     ))
 
     # Switch to relative mode for jogging; listener thread handles responses
+    drain_queue()
     send_gcode("G91", wait_for_ok=False)
 
     is_windows = sys.platform == 'win32'
@@ -507,9 +531,8 @@ def interactive_jog_menu():
         # Return to absolute mode
         send_gcode("G90", wait_for_ok=False)
 
-    if toggle_requested:
-        return "reload"
-    return "quit"
+    return "reload" if toggle_requested else "quit"
+
 
 # ============================================================
 # --- MANUAL G-CODE TERMINAL ---
@@ -534,14 +557,12 @@ def manual_control_menu():
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.",
         border_style="cyan"
     ))
-    current_coord_mode = "G90"  # Track coordinate mode for the session
-    
+
     while True:
         cmd = Prompt.ask("[bold green]>[/bold green]")
 
         if cmd.lower() in ['q', 'quit', 'exit']:
             break
-
         if not cmd.strip():
             continue
 
@@ -554,51 +575,23 @@ def manual_control_menu():
             if "F" not in cmd_upper:
                 cmd_upper += " F300"
 
-        # Track coordinate mode changes so we can restore after homing
-        if cmd_upper == "G91":
-            current_coord_mode = "G91"
-        elif cmd_upper == "G90":
-            current_coord_mode = "G90"
-
         try:
-            if cmd_upper.startswith("G29"):
+            # G28 (home) and G29 (bed levelling) can take minutes; use a longer timeout
+            if cmd_upper.startswith("G28") or cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
-            elif cmd_upper.startswith("G28"):
-                axes_specified = re.findall(r'[XYZB]', cmd_upper[3:])
-                home_x = not axes_specified or 'X' in axes_specified
-                home_y = not axes_specified or 'Y' in axes_specified
-
-                # Home each axis with a plain G28 and let the firmware run its
-                # sensorless routine. Do NOT send a G1 nudge before G28 — a move
-                # right before homing disrupts the TMC2209 StallGuard state, so the
-                # home never triggers and the axis runs the full rail. (Plain
-                # G28 Z already works for exactly this reason.)
-                if not axes_specified or 'Z' in axes_specified:
-                    send_gcode("G28 Z", timeout=180)
-                    send_gcode("G1 Z5", timeout=180)
-                    send_gcode("G28 Z", timeout=180)
-                if home_x:
-                    send_gcode("G28 X", timeout=180)
-                    send_gcode("G1 X5", timeout=180)
-                    send_gcode("G28 X", timeout=180)
-                if home_y:
-                    send_gcode("G28 Y", timeout=180)
-                    send_gcode("G1 Y5", timeout=200)
-                    send_gcode("G28 Y", timeout=180)
-
-                # G28 leaves the firmware in absolute mode; restore the user's mode.
-                send_gcode(current_coord_mode, timeout=5)
-                console.print(f"[dim]Coordinate mode restored to {current_coord_mode} after homing.[/dim]")
             else:
                 send_gcode(cmd_upper)
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
+
 
 # ============================================================
 # --- GCODE TRANSLATION ---
 # ============================================================
 
 def translate_gcode():
+    global loaded_filepath
+
     raw_dir = "raw_gcode"
     out_dir = "translated_gcode"
 
@@ -606,51 +599,19 @@ def translate_gcode():
         os.makedirs(raw_dir)
         console.print(Panel(
             f"[bold yellow]Created '{raw_dir}' directory.[/bold yellow]\n\nPlease place your raw files there.",
-            title="[bold red]Action Required"
-        ))
+            title="[bold red]Action Required"))
         time.sleep(2)
         return
 
     os.makedirs(out_dir, exist_ok=True)
 
-    valid_extensions = ('.gcode', '.txt')
-    files = [f for f in os.listdir(raw_dir) if f.lower().endswith(valid_extensions)]
-
-    if not files:
-        console.print(Panel(f"[bold red]No files found in '{raw_dir}'.[/bold red]"))
-        time.sleep(2)
+    selected_file = pick_file(raw_dir, "Available Files in 'raw_gcode'")
+    if not selected_file:
         return
 
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(raw_dir, x)), reverse=True)
-
-    file_table = Table(
-        show_header=True, header_style="bold green",
-        title="[bold cyan]Available Files in 'raw_gcode'[/bold cyan]"
-    )
-    file_table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    file_table.add_column("Filename", style="magenta")
-    file_table.add_column("Last Modified", justify="right", style="green")
-
-    for i, f in enumerate(files):
-        mtime = os.path.getmtime(os.path.join(raw_dir, f))
-        dt_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-        file_table.add_row(str(i + 1), f, dt_str)
-
-    console.print(file_table)
-    console.print("[0] Cancel")
-
-    choice = IntPrompt.ask(
-        "\n[bold yellow]Select a file to translate[/bold yellow]",
-        choices=[str(i) for i in range(len(files) + 1)]
-    )
-    if choice == 0:
-        return
-
-    selected_file = files[choice - 1]
     input_filepath = os.path.join(raw_dir, selected_file)
 
-    proceed = review_settings_before_translation(selected_file)
-    if not proceed:
+    if not review_settings_before_translation(selected_file):
         return
 
     base_name, ext = os.path.splitext(selected_file)
@@ -681,21 +642,9 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G28 Z ; Home Z (priming pass)\n")
-        f_new.write("G1 Z-5 ; Move Z away from edge") 
-        f_new.write("G28 Z ; Home Z (reliable pass)\n")
-                
-        f_new.write("G28 X ; Home X (priming pass)\n")
-        f_new.write("G1 X5 ; Move Z away from edge") 
-        f_new.write("G28 X ; Home X (reliable pass)\n")
-                    
-        f_new.write("G28 Y ; Home Y (priming pass)\n")
-        f_new.write("G1 Y5 ; Move Z away from edge") 
-        f_new.write("G28 Y ; Home Y (reliable pass)\n")
-        
-        f_new.write("G90 ; Ensure absolute positioning after homing\n")
-        f_new.write("G91 ; Relative to travel to print start\n")
-        f_new.write("G1 X50 Y67 Z-89.2 F300 ; Move from home to the print start position\n")
+        f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
+        f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
+        f_new.write("G1 X50 Y67 Z-89 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
@@ -801,7 +750,7 @@ def translate_gcode():
                     if command.endswith(';'):
                         command = command[:-1]
                         var = True
-                    if command[0].upper() in letters:
+                    if command and command[0].upper() in letters:
                         try:
                             letters[command[0].upper()] = float(command[1:])
                         except ValueError:
@@ -977,16 +926,11 @@ def translate_gcode():
         f"Volume: [bold yellow]{round(netVol_A, 3)} mL[/bold yellow]"
     )
     console.print()
-    console.print(Panel(
-        success_text,
-        title="[bold green]Translation Complete[/bold green]",
-        border_style="green",
-        expand=False
-    ))
+    console.print(Panel(success_text, title="[bold green]Translation Complete[/bold green]",
+                        border_style="green", expand=False))
 
     load_now = Prompt.ask("\nLoad this file for printing now?", choices=["y", "n"], default="y")
     if load_now.lower() == 'y':
-        global loaded_filepath
         loaded_filepath = output_filepath
         console.print(f"[bold green]Loaded {output_filename}![/bold green]")
         time.sleep(1)
@@ -1013,45 +957,45 @@ def check_for_pause(progress):
             sys.stdin.readline()
             pause_requested = True
 
-    if pause_requested:
-        # Freeze motion immediately
+    if not pause_requested:
+        return False
+
+    # Freeze motion immediately
+    try:
+        send_gcode("M220 S0", wait_for_ok=False)
+    except Exception:
+        pass
+
+    progress.stop()
+    console.print("\n[bold yellow]PRINT PAUSED[/bold yellow]")
+
+    action = Prompt.ask(
+        "[bold cyan]Choose an action:[/bold cyan] [bold green](r)esume[/bold green] or [bold red](s)top[/bold red]",
+        choices=["r", "s"], default="r"
+    )
+
+    if action == 's':
+        console.print("[bold red]Cancelling print and parking...[/bold red]")
         try:
-            send_gcode("M220 S0", wait_for_ok=False)
-        except Exception:
-            pass
+            send_gcode("M410", wait_for_ok=False)
+            time.sleep(0.5)
+            send_gcode("M220 S100", wait_for_ok=False)
+            send_gcode("G91", wait_for_ok=False)
+            send_gcode("G1 Z30 F300", wait_for_ok=False)
+            send_gcode("G90", wait_for_ok=False)
+            send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
+        except Exception as e:
+            console.print(f"[dim]Failed to send park command: {e}[/dim]")
+        return True
 
-        progress.stop()
-        console.print("\n[bold yellow]PRINT PAUSED[/bold yellow]")
-
-        action = Prompt.ask(
-            "[bold cyan]Choose an action:[/bold cyan] [bold green](r)esume[/bold green] or [bold red](s)top[/bold red]",
-            choices=["r", "s"],
-            default="r"
-        )
-
-        if action == 's':
-            console.print("[bold red]Cancelling print and parking...[/bold red]")
-            try:
-                send_gcode("M410", wait_for_ok=False)
-                time.sleep(0.5)
-                send_gcode("M220 S100", wait_for_ok=False)
-                send_gcode("G91", wait_for_ok=False)
-                send_gcode("G1 Z30 F300", wait_for_ok=False)
-                send_gcode("G90", wait_for_ok=False)
-                send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
-            except Exception as e:
-                console.print(f"[dim]Failed to send park command: {e}[/dim]")
-            return True
-        else:
-            console.print("[bold green]Resuming print...[/bold green]")
-            try:
-                send_gcode("M220 S100", wait_for_ok=False)
-            except Exception:
-                pass
-            progress.start()
-            return False
-
+    console.print("[bold green]Resuming print...[/bold green]")
+    try:
+        send_gcode("M220 S100", wait_for_ok=False)
+    except Exception:
+        pass
+    progress.start()
     return False
+
 
 # ============================================================
 # --- LOAD FILE MENU ---
@@ -1065,57 +1009,21 @@ def load_file_menu():
     if not os.path.exists(out_dir):
         console.print(Panel(
             f"[bold red]No '{out_dir}' directory found.[/bold red]\n\nTranslate a file first (option 2) to create it.",
-            border_style="red"
-        ))
+            border_style="red"))
         time.sleep(2)
         return
-
-    valid_extensions = ('.gcode', '.txt')
-    files = [f for f in os.listdir(out_dir) if f.lower().endswith(valid_extensions)]
-
-    if not files:
-        console.print(Panel(
-            f"[bold red]No translated files found in '{out_dir}'.[/bold red]\n\nTranslate a file first (option 2).",
-            border_style="red"
-        ))
-        time.sleep(2)
-        return
-
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(out_dir, x)), reverse=True)
-
-    file_table = Table(
-        show_header=True, header_style="bold green",
-        title=f"[bold cyan]Translated Files in '{out_dir}'[/bold cyan]"
-    )
-    file_table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    file_table.add_column("Filename", style="magenta")
-    file_table.add_column("Last Modified", justify="right", style="green")
-    file_table.add_column("Size", justify="right", style="yellow")
-
-    for i, f in enumerate(files):
-        full_path = os.path.join(out_dir, f)
-        mtime = os.path.getmtime(full_path)
-        size_kb = os.path.getsize(full_path) / 1024
-        dt_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-        file_table.add_row(str(i + 1), f, dt_str, f"{size_kb:.1f} KB")
-
-    console.print(file_table)
 
     if loaded_filepath:
-        console.print(f"\nCurrently loaded: [bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]")
-    console.print("[0] Cancel\n")
+        console.print(f"Currently loaded: [bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]\n")
 
-    choice = IntPrompt.ask(
-        "[bold yellow]Select a file to load[/bold yellow]",
-        choices=[str(i) for i in range(len(files) + 1)]
-    )
-    if choice == 0:
+    selected_file = pick_file(out_dir, "Translated Files in 'translated_gcode'", show_size=True)
+    if not selected_file:
         return
 
-    selected_file = files[choice - 1]
     loaded_filepath = os.path.join(out_dir, selected_file)
     console.print(f"\n[bold green]Loaded:[/bold green] [cyan]{selected_file}[/cyan]")
     time.sleep(1.5)
+
 
 # ============================================================
 # --- PRINT FILE ---
@@ -1163,12 +1071,7 @@ def print_file():
         f"[bold cyan]Press ENTER to PAUSE the print.[/bold cyan]"
     ))
 
-    # Drain any stale responses before we start
-    while not printer_response_queue.empty():
-        try:
-            printer_response_queue.get_nowait()
-        except queue.Empty:
-            break
+    drain_queue()  # Discard any stale responses before we start
 
     with Progress(
         SpinnerColumn(),
@@ -1181,7 +1084,7 @@ def print_file():
         task = progress.add_task("[cyan]Printing...", total=len(lines))
         print_aborted = False
 
-        for i, line in enumerate(lines):
+        for line in lines:
             if check_for_pause(progress):
                 print_aborted = True
                 break
@@ -1232,44 +1135,6 @@ def print_file():
 
     time.sleep(2)
 
-# ============================================================
-# --- GITHUB UPDATE ---
-# ============================================================
-
-def update_orca():
-    global printer_conn
-    console.print(Panel("[bold cyan]Fetching latest updates from GitHub...[/bold cyan]", border_style="cyan"))
-    try:
-        result = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
-        console.print("[bold green]Successfully pulled latest changes![/bold green]")
-        if result.stdout.strip():
-            console.print(f"[dim]{result.stdout.strip()}[/dim]")
-
-        if "Already up to date." in result.stdout:
-            time.sleep(2)
-            return
-
-        console.print("\n[bold yellow]Restarting ORCA to apply updates...[/bold yellow]")
-        time.sleep(2)
-
-        if printer_conn:
-            try:
-                printer_conn.close()
-            except Exception:
-                pass
-            printer_conn = None
-
-        os.execl(sys.executable, sys.executable, *sys.argv)
-
-    except subprocess.CalledProcessError as e:
-        console.print("[bold red]Failed to update from GitHub.[/bold red]")
-        if e.stderr:
-            console.print(f"[dim]{e.stderr.strip()}[/dim]")
-        time.sleep(3)
-    except Exception as e:
-        console.print(f"[bold red]Unexpected error: {e}[/bold red]")
-        time.sleep(3)
-
 
 # ============================================================
 # --- TRANSLATION SETTINGS REVIEW ---
@@ -1282,27 +1147,8 @@ def review_settings_before_translation(filename):
         console.clear()
         display_header()
         console.print(f"Preparing to translate: [bold magenta]{filename}[/bold magenta]\n")
+        console.print(build_config_table("Translation Settings"))
 
-        config_table = Table(
-            show_header=True,
-            header_style="bold yellow",
-            expand=True,
-            title="[bold cyan]Translation Settings[/bold cyan]"
-        )
-        config_table.add_column("Parameter")
-        config_table.add_column("Value", style="cyan")
-        config_table.add_column("Parameter")
-        config_table.add_column("Value", style="cyan")
-
-        config_table.add_row("Coordinate Mode", COORDINATE_MODE, "Extrusion Axis", EXTRUSION_AXIS)
-        config_table.add_row("Z Syringe (mm)", str(Z_SYRINGE_DIAMETER), "A Syringe (mm)", str(A_SYRINGE_DIAMETER))
-        config_table.add_row("Z Nozzle (mm)", str(Z_NOZZLE_DIAMETER), "A Nozzle (mm)", str(A_NOZZLE_DIAMETER))
-        config_table.add_row(
-            "Extrusion Coeff.", str(EXTRUSION_COEFFICIENT),
-            "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]"
-        )
-
-        console.print(config_table)
         console.print("\n[bold yellow]--- Pre-Translation Check ---[/bold yellow]")
         console.print("[1] [bold green]Proceed with Translation[/bold green]")
         console.print("[2] Change Extrusion Coefficient")
@@ -1310,10 +1156,7 @@ def review_settings_before_translation(filename):
         console.print("[4] Toggle Coordinate Mode")
         console.print("[5] Cancel\n")
 
-        choice = Prompt.ask(
-            "[bold yellow]Choose an option[/bold yellow]",
-            choices=["1", "2", "3", "4", "5"]
-        )
+        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5"])
 
         if choice == "1":
             return True
@@ -1331,6 +1174,7 @@ def review_settings_before_translation(filename):
         elif choice == "5":
             return False
 
+
 # ============================================================
 # --- MAIN MENU ---
 # ============================================================
@@ -1342,23 +1186,17 @@ def main():
         console.clear()
         display_header()
 
-        conn_status = (
-            f"[bold green]Connected ({printer_conn.port})[/bold green]"
-            if printer_conn
-            else "[bold red]Not Connected[/bold red]"
-        )
+        conn_status = (f"[bold green]Connected ({printer_conn.port})[/bold green]"
+                       if printer_conn else "[bold red]Not Connected[/bold red]")
         console.print(f"Printer Status: {conn_status}")
 
-        file_status = (
-            f"[bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]"
-            if loaded_filepath
-            else "[dim]None[/dim]"
-        )
+        file_status = (f"[bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]"
+                       if loaded_filepath else "[dim]None[/dim]")
         console.print(f"Loaded File:    {file_status}\n")
 
         console.print("[bold yellow]--- Main Menu ---[/bold yellow]")
 
-        valid_choices = ["1", "2", "3", "8", "9", "10"]
+        valid_choices = ["1", "2", "3", "7", "8"]
 
         if printer_conn:
             console.print("[0] [bold red]Reset / Reboot Printer Board[/bold red]")
@@ -1382,9 +1220,8 @@ def main():
             console.print("[5] [dim]Manual G-Code Terminal (Requires Connection)[/dim]")
             console.print("[6] [dim]Jog Control (Requires Connection)[/dim]")
 
-        console.print("[8] Options / Settings")
-        console.print("[9] Update ORCA from GitHub")
-        console.print("[10] Exit\n")
+        console.print("[7] Options / Settings")
+        console.print("[8] Exit\n")
 
         valid_choices = sorted(set(valid_choices), key=int)
         choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=valid_choices)
@@ -1402,15 +1239,11 @@ def main():
         elif choice == "5":
             manual_control_menu()
         elif choice == "6":
-            while True:
-                res = interactive_jog_menu()
-                if res != "reload":
-                    break
-        elif choice == "8":
+            while interactive_jog_menu() == "reload":
+                pass
+        elif choice == "7":
             settings_menu()
-        elif choice == "9":
-            update_orca()
-        elif choice == "10":
+        elif choice == "8":
             printer_listener_running = False
             if printer_listener_thread and printer_listener_thread.is_alive():
                 printer_listener_thread.join(timeout=2)
