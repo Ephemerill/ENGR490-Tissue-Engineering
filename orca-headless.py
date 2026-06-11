@@ -5,6 +5,9 @@ import sys
 import re
 import threading
 import queue
+import json
+import signal
+import atexit
 from datetime import datetime
 
 # Platform-specific imports for terminal control
@@ -65,6 +68,32 @@ START_FROM_CENTER = False       # If True, expects bed to start in center, skipp
 BAUD_RATE = 115200
 
 # ==========================================
+# --- Z SAFETY CONFIGURATION ---
+# ==========================================
+# Z_SAFE_HOME_HEIGHT is the position Z must be AT OR BELOW before G28 is safe
+# to run.  When the firmware homes, it drives Z toward its endstop (the TOP of
+# the rail).  If Z is already near the top the carriage crashes.  Setting this
+# to a low value (e.g. 5 mm) guarantees Z is well away from the top before any
+# homing sequence starts.
+#
+# Z_PREDROP_HEIGHT is the absolute position Z is commanded to before G28.
+# It must be <= Z_SAFE_HOME_HEIGHT to be effective.  The move uses G90 so the
+# value is always interpreted as an absolute coordinate regardless of the
+# current positioning mode.
+Z_SAFE_HOME_HEIGHT  = 5.0   # mm — threshold: if Z is above this, drop first
+Z_PREDROP_HEIGHT    = 2.0   # mm — absolute target before G28 (must be < Z_SAFE_HOME_HEIGHT)
+Z_PREDROP_SPEED     = 300   # mm/min for the safety drop move
+
+# ==========================================
+# --- PERSISTENT STATE CONFIGURATION ---
+# ==========================================
+# The last known Z position is written to this file every time it changes so
+# that a crash, power outage, or forced kill cannot leave the safety guard
+# blind on the next run.  The file lives next to the script so it travels with
+# the project folder.
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orca_state.json")
+
+# ==========================================
 # --- STATE VARIABLES ---
 # ==========================================
 printer_conn = None
@@ -75,6 +104,150 @@ printer_response_queue = queue.Queue()
 
 printer_listener_running = False
 printer_listener_thread = None
+
+# Track the last known Z position so the G28 guard can decide whether a
+# pre-drop is needed.  Updated by safe_home_all_axes() after every move and
+# reset to None on connect/reset so the first G28 always drops.
+# This value is also persisted to disk so it survives crashes and restarts.
+_last_known_z = None
+
+
+# ============================================================
+# --- PERSISTENT Z STATE ---
+# ============================================================
+
+def load_z_state():
+    """
+    Load the last known Z position from disk on startup.
+
+    Returns the saved float value, or None if the file does not exist or
+    cannot be parsed.  A console notice is printed so the operator is aware
+    the saved value is being used rather than starting blind.
+    """
+    if not os.path.exists(STATE_FILE):
+        return None
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+        z = data.get("last_known_z")
+        ts = data.get("saved_at", "unknown time")
+        if z is not None:
+            console.print(
+                f"[dim]State restored: last known Z = {z:.2f} mm "
+                f"(saved {ts})[/dim]"
+            )
+        return z
+    except Exception as e:
+        console.print(f"[dim yellow]Could not read state file ({e}); starting with unknown Z.[/dim yellow]")
+        return None
+
+
+def save_z_state(z):
+    """
+    Persist the current Z position to disk immediately.
+
+    Called every time _last_known_z changes so the on-disk value stays
+    current.  Failures are logged but never raised — the safety logic
+    degrades gracefully to the conservative (always-drop) default.
+    """
+    try:
+        payload = {
+            "last_known_z": z,
+            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        # Write to a temp file then rename for atomicity — avoids a corrupt
+        # state file if the process is killed mid-write.
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        console.print(f"[dim yellow]Warning: could not save Z state ({e})[/dim yellow]")
+
+
+def set_last_known_z(value):
+    """
+    Central setter for _last_known_z.
+
+    Use this instead of assigning to the global directly so that every
+    change is automatically persisted to disk.
+    """
+    global _last_known_z
+    _last_known_z = value
+    save_z_state(value)
+
+
+def clear_last_known_z():
+    """
+    Mark Z position as unknown and persist that fact.
+
+    Called after a board reset or fresh connect when we genuinely do not
+    know where the carriage is.  Storing None tells the next G28 guard to
+    perform the conservative pre-drop.
+    """
+    global _last_known_z
+    _last_known_z = None
+    save_z_state(None)
+
+
+# ============================================================
+# --- GRACEFUL SHUTDOWN (atexit + signals) ---
+# ============================================================
+
+def _emergency_save():
+    """
+    Final-chance Z state flush called by atexit and signal handlers.
+
+    By the time this runs the Rich console may be in a bad state, so we
+    write directly to stderr to avoid any formatting errors.
+    """
+    try:
+        save_z_state(_last_known_z)
+    except Exception:
+        pass  # Truly last resort — cannot do anything useful here
+
+
+def _signal_handler(signum, frame):
+    """
+    Handle SIGINT (Ctrl+C) and SIGTERM (kill / system shutdown).
+
+    Saves Z state, closes the serial port cleanly if possible, then exits
+    with an appropriate code so the shell knows the process was signalled.
+    """
+    global printer_listener_running, printer_conn
+
+    _emergency_save()
+
+    # Stop the listener thread so it does not block port closure
+    printer_listener_running = False
+
+    if printer_conn:
+        try:
+            printer_conn.close()
+        except Exception:
+            pass
+
+    # Exit with the conventional signal exit code (128 + signal number)
+    sys.exit(128 + signum)
+
+
+# Register the final-chance save for all normal exit paths (sys.exit,
+# end of main(), unhandled exceptions, etc.)
+atexit.register(_emergency_save)
+
+# Register the signal handler for external kill signals.
+# SIGINT  = Ctrl+C in the terminal
+# SIGTERM = `kill <pid>` and most OS/service-manager shutdowns
+signal.signal(signal.SIGINT,  _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
+
+# SIGBREAK is a Windows-only signal sent by Ctrl+Break; register it only
+# on Windows so the import does not fail on POSIX systems.
+if sys.platform == "win32":
+    try:
+        signal.signal(signal.SIGBREAK, _signal_handler)  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        pass
 
 
 def display_header():
@@ -92,7 +265,7 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.18[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.20[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -260,6 +433,61 @@ def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
 
 
 # ============================================================
+# --- SAFE HOMING (Z PRE-DROP + SIMULTANEOUS G28) ---
+# ============================================================
+
+def safe_home_all_axes():
+    """
+    Home all axes safely.
+
+    Problem: G28 drives Z toward its endstop at the TOP of the rail.  If Z is
+    already near the top (e.g. 90 mm) the carriage crashes before StallGuard
+    can trigger.
+
+    Fix applied here:
+      1. Switch to absolute mode temporarily.
+      2. Drop Z (and only Z) to Z_PREDROP_HEIGHT so it is well clear of the
+         top endstop before any homing command is sent.
+      3. Issue a single G28 X Y Z so ALL axes home simultaneously — required
+         to prevent the needle hitting the petri dish edge.
+      4. Restore the user's coordinate mode.
+
+    The pre-drop uses G1 (not G0) so feedrate is explicit and controllable.
+    M400 is sent after the drop to flush the planner before G28 fires.
+
+    _last_known_z is updated via set_last_known_z() / clear_last_known_z()
+    so every change is immediately persisted to disk.
+    """
+    # Decide whether a pre-drop is actually needed.
+    # If we have no position data, always drop (safe default).
+    needs_drop = (_last_known_z is None) or (_last_known_z > Z_SAFE_HOME_HEIGHT)
+
+    if needs_drop:
+        console.print(
+            f"[bold yellow]Z-SAFETY:[/bold yellow] Dropping Z to {Z_PREDROP_HEIGHT} mm "
+            f"before homing (last known Z = "
+            f"{'unknown' if _last_known_z is None else f'{_last_known_z:.1f} mm'})..."
+        )
+        # Use absolute mode for the safety drop regardless of current mode
+        send_gcode("G90")
+        send_gcode(f"G1 Z{Z_PREDROP_HEIGHT} F{Z_PREDROP_SPEED}")
+        send_gcode("M400")   # Wait for move to complete before homing
+        set_last_known_z(Z_PREDROP_HEIGHT)
+    else:
+        console.print(
+            f"[dim]Z at {_last_known_z:.1f} mm — within safe range, no pre-drop needed.[/dim]"
+        )
+
+    # Home all axes simultaneously in one command so X/Y/Z move together.
+    # This prevents the needle from catching the petri dish edge.
+    console.print("[bold cyan]Homing all axes simultaneously (G28 X Y Z)...[/bold cyan]")
+    send_gcode("G28 X Y Z", timeout=180)
+
+    # After homing, position is 0,0,0 by firmware convention
+    set_last_known_z(0.0)
+
+
+# ============================================================
 # --- SETTINGS MENU ---
 # ============================================================
 
@@ -360,6 +588,11 @@ def connect_to_printer():
         drain_queue()
         send_gcode("M115", timeout=10)
 
+        # After a fresh connect we don't know where Z is — mark as unknown so
+        # the next G28 call unconditionally performs the safety pre-drop.
+        # clear_last_known_z() also persists this to disk immediately.
+        clear_last_known_z()
+
         console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
         time.sleep(1)
 
@@ -385,11 +618,6 @@ def reset_printer_board():
 
     console.print("[bold yellow]Resetting printer board...[/bold yellow]")
     try:
-        # Best-effort emergency stop. Write M112 directly (NOT via send_gcode) with
-        # a short write timeout and swallow any error: if the board is hung it isn't
-        # draining its RX buffer, so the write would block and otherwise abort the
-        # reset before the DTR toggle below ever runs. The hardware reset reboots
-        # the board regardless of firmware state, so M112 failing here is harmless.
         old_wt = printer_conn.write_timeout
         try:
             printer_conn.write_timeout = 1
@@ -404,8 +632,7 @@ def reset_printer_board():
 
         time.sleep(0.3)
 
-        # Hardware reset via DTR toggle — reboots the board at the hardware level
-        # whatever state the firmware is in. This always runs.
+        # Hardware reset via DTR toggle
         printer_conn.dtr = False
         time.sleep(1.0)
         printer_conn.dtr = True
@@ -413,7 +640,10 @@ def reset_printer_board():
 
         printer_conn.reset_input_buffer()
         printer_conn.reset_output_buffer()
-        drain_queue()  # Discard stale boot messages so they don't fake an 'ok'
+        drain_queue()
+
+        # After a board reset, Z position is unknown — persist that fact.
+        clear_last_known_z()
 
         console.print("[bold green]Printer reset complete. Give it a moment to finish booting.[/bold green]")
         time.sleep(2)
@@ -529,13 +759,20 @@ def interactive_jog_menu():
                         cmd += f" F{JOG_SPEED_MM_MIN}"
 
                         if HIGH_PRECISION_JOG:
-                            # M400 after each move flushes the planner for true instant stop
                             send_gcode(cmd, wait_for_ok=False)
                             send_gcode("M400", wait_for_ok=False)
                             in_flight_commands += 2
                         else:
                             send_gcode(cmd, wait_for_ok=False)
                             in_flight_commands += 1
+
+                        # Track Z position changes during jogging (relative mode)
+                        # and persist each change immediately.
+                        if dz != 0:
+                            if _last_known_z is not None:
+                                set_last_known_z(_last_known_z + dz)
+                            else:
+                                clear_last_known_z()
 
                         last_command_time = time.time()
 
@@ -570,11 +807,15 @@ def manual_control_menu():
         "[bold cyan]Manual G-Code Terminal[/bold cyan]\n"
         "Type your G-Code commands and press Enter.\n"
         "Movement commands (G0/G1) default to F300 if no speed is specified.\n\n"
-        "[bold yellow]TIP:[/bold yellow] Send [bold green]G28[/bold green] to sensorless-home all axes using your firmware configuration.\n"
+        "[bold yellow]TIP:[/bold yellow] Send [bold green]G28[/bold green] to safely home all axes.\n"
+        "[bold yellow]     Z will be lowered to a safe height first, then all axes home simultaneously.[/bold yellow]\n"
         "Send [bold green]G91[/bold green] to switch to Relative Mode for manual moves.\n\n"
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.",
         border_style="cyan"
     ))
+
+    # Track whether we're currently in relative mode so Z tracking stays accurate
+    current_mode_relative = False
 
     while True:
         cmd = Prompt.ask("[bold green]>[/bold green]")
@@ -593,9 +834,43 @@ def manual_control_menu():
             if "F" not in cmd_upper:
                 cmd_upper += " F300"
 
+        # -------------------------------------------------------
+        # Intercept G28: route through the safe homing function
+        # instead of sending the raw command, so the Z pre-drop
+        # and simultaneous-axis requirement are always enforced.
+        # -------------------------------------------------------
+        if cmd_upper.startswith("G28"):
+            try:
+                safe_home_all_axes()
+            except Exception as e:
+                console.print(f"[bold red]Homing error:[/bold red] {e}")
+            continue
+
+        # Track mode switches so Z position tracking stays valid
+        if cmd_upper.strip() == "G91":
+            current_mode_relative = True
+        elif cmd_upper.strip() == "G90":
+            current_mode_relative = False
+
+        # Update _last_known_z from manual G1/G0 commands and persist each
+        # change immediately so a crash cannot leave the state stale.
+        if cmd_upper.startswith(("G0", "G1")):
+            z_match = re.search(r'Z([-\d.]+)', cmd_upper)
+            if z_match:
+                try:
+                    z_val = float(z_match.group(1))
+                    if current_mode_relative:
+                        if _last_known_z is not None:
+                            set_last_known_z(_last_known_z + z_val)
+                        else:
+                            clear_last_known_z()
+                    else:
+                        set_last_known_z(z_val)
+                except ValueError:
+                    pass
+
         try:
-            # G28 (home) and G29 (bed levelling) can take minutes; use a longer timeout
-            if cmd_upper.startswith("G28") or cmd_upper.startswith("G29"):
+            if cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
             else:
                 send_gcode(cmd_upper)
@@ -660,8 +935,15 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
-        f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
+        f_new.write("; SAFETY: Drop Z to a safe height before homing so it cannot\n")
+        f_new.write(";         crash into the top of the rail during G28.\n")
+        f_new.write(";         All axes then home simultaneously (single G28 X Y Z)\n")
+        f_new.write(";         to prevent the needle hitting the petri dish edge.\n")
+        f_new.write("G90 ; Absolute mode for the safety pre-drop\n")
+        f_new.write(f"G1 Z{Z_PREDROP_HEIGHT} F{Z_PREDROP_SPEED} ; Lower Z to safe height before homing\n")
+        f_new.write("M400 ; Wait for Z pre-drop to complete\n")
+        f_new.write("G28 X Y Z ; Home ALL axes simultaneously (StallGuard)\n")
+        f_new.write("G91 ; Relative positioning to travel to print start\n")
         f_new.write("G1 X50 Y67 Z-89 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
@@ -723,7 +1005,6 @@ def translate_gcode():
                         continue
 
                     if 'G92' in stripped_line and 'E' in stripped_line:
-                        # Replace only the axis letter E (e.g. 'E0'), not E inside comments or words
                         safe_line = re.sub(r'(?<![;\w])E(?=[\d\-\.])', EXTRUSION_AXIS, original_line)
                         f_new.write(safe_line)
                     else:
@@ -924,9 +1205,10 @@ def translate_gcode():
 
         f_new.write("\n; --- End of Print Sequence ---\n")
         f_new.write("G91 ; Switch to relative positioning\n")
-        f_new.write("G1 Z30 F300 ; Lift nozzle 30mm to safely clear the print\n")
+        f_new.write("G1 Z-5 F300 ; Lower nozzle 5mm to park near bed (safe for next home)\n")
         f_new.write("G90 ; Switch back to absolute positioning\n")
-        f_new.write("G1 X0 Y0 F300 ; Park at the print origin\n")
+        f_new.write("G1 X0 Y0 F300 ; Park X/Y at origin\n")
+        f_new.write("; NOTE: Z is left at a low position so the next G28 cannot crash\n")
         f_new.write("; -----------------------------\n")
 
     finally:
@@ -961,7 +1243,6 @@ def translate_gcode():
 def check_for_pause(progress):
     """
     Non-blocking check for an Enter keypress during printing.
-    Lets the user pause, then choose to resume or cancel.
     Returns True if the print should be aborted.
     """
     pause_requested = False
@@ -978,7 +1259,6 @@ def check_for_pause(progress):
     if not pause_requested:
         return False
 
-    # Freeze motion immediately
     try:
         send_gcode("M220 S0", wait_for_ok=False)
     except Exception:
@@ -999,7 +1279,7 @@ def check_for_pause(progress):
             time.sleep(0.5)
             send_gcode("M220 S100", wait_for_ok=False)
             send_gcode("G91", wait_for_ok=False)
-            send_gcode("G1 Z30 F300", wait_for_ok=False)
+            send_gcode("G1 Z-5 F300", wait_for_ok=False)   # Park LOW, not high
             send_gcode("G90", wait_for_ok=False)
             send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
         except Exception as e:
@@ -1062,11 +1342,10 @@ def print_file():
 
     console.print()
 
-    # The translated file now begins with G28 sensorless homing, so the bed no
-    # longer needs to be positioned by hand — just make sure it can home safely.
     warning_text = (
-        "ACTION REQUIRED: The print will begin by sensorless-homing all axes (G28).\n"
-        "Make sure each axis can travel freely to its endstop and the build area is clear."
+        "ACTION REQUIRED: The print will begin by homing all axes simultaneously (G28 X Y Z).\n"
+        "Z will be lowered to a safe position first to prevent rail crashes.\n"
+        "Make sure each axis can travel freely and the build area is clear."
     )
     console.print(Panel(f"[bold yellow]{warning_text}[/bold yellow]", border_style="yellow"))
     ready = Prompt.ask("Ready to home and start the print?", choices=["y", "n"], default="y")
@@ -1089,7 +1368,7 @@ def print_file():
         f"[bold cyan]Press ENTER to PAUSE the print.[/bold cyan]"
     ))
 
-    drain_queue()  # Discard any stale responses before we start
+    drain_queue()
 
     with Progress(
         SpinnerColumn(),
@@ -1118,7 +1397,6 @@ def print_file():
                 continue
 
             try:
-                # G28 (home) at the top of the file can take a while; give it room
                 if command.upper().startswith("G28") or command.upper().startswith("G29"):
                     send_gcode(command, timeout=180)
                 else:
@@ -1132,7 +1410,7 @@ def print_file():
                 try:
                     send_gcode("M400", wait_for_ok=False)
                     send_gcode("G91", wait_for_ok=False)
-                    send_gcode("G1 Z20 F300", wait_for_ok=False)
+                    send_gcode("G1 Z-5 F300", wait_for_ok=False)   # Park LOW
                     send_gcode("G90", wait_for_ok=False)
                 except Exception:
                     pass
@@ -1198,7 +1476,13 @@ def review_settings_before_translation(filename):
 # ============================================================
 
 def main():
-    global printer_listener_running
+    global printer_listener_running, _last_known_z
+
+    # -------------------------------------------------------
+    # Restore Z state from disk on startup so the safety guard
+    # has a reference even after a crash or power outage.
+    # -------------------------------------------------------
+    _last_known_z = load_z_state()
 
     while True:
         console.clear()
@@ -1210,7 +1494,12 @@ def main():
 
         file_status = (f"[bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]"
                        if loaded_filepath else "[dim]None[/dim]")
-        console.print(f"Loaded File:    {file_status}\n")
+        console.print(f"Loaded File:    {file_status}")
+
+        # Show persisted Z so the operator can confirm it looks sane
+        z_display = (f"[bold yellow]{_last_known_z:.2f} mm[/bold yellow]"
+                     if _last_known_z is not None else "[dim]Unknown (will pre-drop before homing)[/dim]")
+        console.print(f"Last Known Z:   {z_display}\n")
 
         console.print("[bold yellow]--- Main Menu ---[/bold yellow]")
 
@@ -1275,9 +1564,13 @@ def main():
 
 
 if __name__ == "__main__":
+    # KeyboardInterrupt is now handled by _signal_handler (SIGINT), but keep
+    # a fallback here in case Python delivers it as an exception instead of a
+    # signal (e.g. when running inside some IDEs or wrapped launchers).
     try:
         main()
     except KeyboardInterrupt:
+        _emergency_save()
         printer_listener_running = False
         if printer_conn:
             try:
