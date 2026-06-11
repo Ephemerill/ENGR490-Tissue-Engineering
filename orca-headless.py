@@ -87,11 +87,14 @@ Z_PREDROP_SPEED     = 300   # mm/min for the safety drop move
 # ==========================================
 # --- PERSISTENT STATE CONFIGURATION ---
 # ==========================================
-# The last known Z position is written to this file every time it changes so
-# that a crash, power outage, or forced kill cannot leave the safety guard
-# blind on the next run.  The file lives next to the script so it travels with
-# the project folder.
+# All axis positions (X, Y, Z, B, C) are written to this file every time any
+# axis moves so that a crash, power outage, or forced kill cannot leave the
+# safety guard blind on the next run.  The file lives next to the script so it
+# travels with the project folder.
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orca_state.json")
+
+# Canonical axis list — order is display order throughout the UI.
+AXES = ("x", "y", "z", "b", "c")
 
 # ==========================================
 # --- STATE VARIABLES ---
@@ -105,89 +108,145 @@ printer_response_queue = queue.Queue()
 printer_listener_running = False
 printer_listener_thread = None
 
-# Track the last known Z position so the G28 guard can decide whether a
-# pre-drop is needed.  Updated by safe_home_all_axes() after every move and
-# reset to None on connect/reset so the first G28 always drops.
-# This value is also persisted to disk so it survives crashes and restarts.
-_last_known_z = None
+# Live axis position table.  Each entry is float mm or None (= unknown).
+# Access and mutation MUST go through the helper functions below so every
+# change is immediately persisted to disk.
+_axis_pos = {a: None for a in AXES}
 
 
 # ============================================================
-# --- PERSISTENT Z STATE ---
+# --- PERSISTENT AXIS STATE ---
 # ============================================================
 
-def load_z_state():
+def _save_axis_state():
     """
-    Load the last known Z position from disk on startup.
+    Atomically persist _axis_pos to disk.
 
-    Returns the saved float value, or None if the file does not exist or
-    cannot be parsed.  A console notice is printed so the operator is aware
-    the saved value is being used rather than starting blind.
-    """
-    if not os.path.exists(STATE_FILE):
-        return None
-    try:
-        with open(STATE_FILE, "r") as f:
-            data = json.load(f)
-        z = data.get("last_known_z")
-        ts = data.get("saved_at", "unknown time")
-        if z is not None:
-            console.print(
-                f"[dim]State restored: last known Z = {z:.2f} mm "
-                f"(saved {ts})[/dim]"
-            )
-        return z
-    except Exception as e:
-        console.print(f"[dim yellow]Could not read state file ({e}); starting with unknown Z.[/dim yellow]")
-        return None
-
-
-def save_z_state(z):
-    """
-    Persist the current Z position to disk immediately.
-
-    Called every time _last_known_z changes so the on-disk value stays
-    current.  Failures are logged but never raised — the safety logic
-    degrades gracefully to the conservative (always-drop) default.
+    Uses a write-then-rename pattern so a kill mid-write cannot corrupt the
+    file — the OS swap is atomic on every POSIX filesystem and on NTFS.
+    Failures are logged but never raised so the safety logic degrades
+    gracefully to the conservative always-drop default.
     """
     try:
         payload = {
-            "last_known_z": z,
+            "axes":     dict(_axis_pos),
             "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
-        # Write to a temp file then rename for atomicity — avoids a corrupt
-        # state file if the process is killed mid-write.
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(payload, f)
+            json.dump(payload, f, indent=2)
         os.replace(tmp, STATE_FILE)
     except Exception as e:
-        console.print(f"[dim yellow]Warning: could not save Z state ({e})[/dim yellow]")
+        console.print(f"[dim yellow]Warning: could not save axis state ({e})[/dim yellow]")
 
 
-def set_last_known_z(value):
+def load_axis_state():
     """
-    Central setter for _last_known_z.
+    Load all axis positions from disk on startup.
 
-    Use this instead of assigning to the global directly so that every
-    change is automatically persisted to disk.
+    Populates _axis_pos in-place.  Prints a dim status line for every axis
+    that has a known position so the operator can confirm the values look
+    sane before connecting or homing.
+
+    Returns True if the file existed and was readable, False otherwise.
     """
-    global _last_known_z
-    _last_known_z = value
-    save_z_state(value)
+    global _axis_pos
+
+    if not os.path.exists(STATE_FILE):
+        _axis_pos = {a: None for a in AXES}
+        return False
+
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+
+        saved = data.get("axes", {})
+        ts    = data.get("saved_at", "unknown time")
+
+        # Accept both the old single-key format {"last_known_z": ...} and the
+        # new multi-axis format {"axes": {"x": ..., "z": ..., ...}} so existing
+        # state files from v1.0.20 are not silently lost on first upgrade.
+        if "last_known_z" in data and "axes" not in data:
+            saved = {"z": data.get("last_known_z")}
+
+        for a in AXES:
+            _axis_pos[a] = saved.get(a)  # None if key absent
+
+        known = {a: v for a, v in _axis_pos.items() if v is not None}
+        if known:
+            parts = "  ".join(f"{a.upper()}={v:.2f}" for a, v in known.items())
+            console.print(f"[dim]State restored ({ts}): {parts} mm[/dim]")
+        else:
+            console.print("[dim]State file found but all axes unknown.[/dim]")
+
+        return True
+
+    except Exception as e:
+        console.print(f"[dim yellow]Could not read state file ({e}); all axes start unknown.[/dim yellow]")
+        _axis_pos = {a: None for a in AXES}
+        return False
 
 
-def clear_last_known_z():
+# ---- Axis accessors / mutators ----------------------------------------
+
+def get_axis(axis: str):
     """
-    Mark Z position as unknown and persist that fact.
+    Return the last known position of *axis* in mm, or None if unknown.
 
-    Called after a board reset or fresh connect when we genuinely do not
-    know where the carriage is.  Storing None tells the next G28 guard to
-    perform the conservative pre-drop.
+    axis must be one of AXES ('x', 'y', 'z', 'b', 'c'), case-insensitive.
     """
-    global _last_known_z
-    _last_known_z = None
-    save_z_state(None)
+    return _axis_pos.get(axis.lower())
+
+
+def set_axis(axis: str, value: float):
+    """
+    Set *axis* to *value* mm and persist immediately.
+
+    Use for absolute moves and post-homing resets.
+    """
+    _axis_pos[axis.lower()] = value
+    _save_axis_state()
+
+
+def offset_axis(axis: str, delta: float):
+    """
+    Add *delta* mm to *axis* and persist immediately.
+
+    If the axis position is currently unknown (None) it stays None — we
+    cannot compute an absolute position from a relative offset without a
+    reference.  Call set_axis() first to establish a reference.
+    """
+    a = axis.lower()
+    cur = _axis_pos.get(a)
+    if cur is not None:
+        _axis_pos[a] = cur + delta
+        _save_axis_state()
+    # else: remains None — do not call _save_axis_state() for a no-op
+
+
+def clear_axes(*axes):
+    """
+    Mark one or more axes as unknown (None) and persist.
+
+    Call with no arguments to clear every axis (used after a board reset or
+    fresh connect when carriage position is genuinely unknown).
+
+    Examples
+    --------
+    clear_axes()              # all axes unknown
+    clear_axes('x', 'y')     # only X and Y unknown, others unchanged
+    """
+    targets = [a.lower() for a in axes] if axes else list(AXES)
+    for a in targets:
+        _axis_pos[a] = None
+    _save_axis_state()
+
+
+# Convenience shorthands kept for Z since it is the safety-critical axis
+# referenced throughout the code base — avoids renaming every callsite.
+def get_z():  return get_axis("z")
+def set_z(v): set_axis("z", v)
+def clear_z(): clear_axes("z")
 
 
 # ============================================================
@@ -196,13 +255,14 @@ def clear_last_known_z():
 
 def _emergency_save():
     """
-    Final-chance Z state flush called by atexit and signal handlers.
+    Final-chance axis state flush called by atexit and signal handlers.
 
     By the time this runs the Rich console may be in a bad state, so we
-    write directly to stderr to avoid any formatting errors.
+    bypass it and write directly — _save_axis_state() already handles its
+    own exceptions silently.
     """
     try:
-        save_z_state(_last_known_z)
+        _save_axis_state()
     except Exception:
         pass  # Truly last resort — cannot do anything useful here
 
@@ -265,7 +325,7 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.20[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.21[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -455,27 +515,28 @@ def safe_home_all_axes():
     The pre-drop uses G1 (not G0) so feedrate is explicit and controllable.
     M400 is sent after the drop to flush the planner before G28 fires.
 
-    _last_known_z is updated via set_last_known_z() / clear_last_known_z()
-    so every change is immediately persisted to disk.
+    All axis positions are updated via set_axis() / clear_axes() so every
+    change is immediately persisted to disk.
     """
     # Decide whether a pre-drop is actually needed.
-    # If we have no position data, always drop (safe default).
-    needs_drop = (_last_known_z is None) or (_last_known_z > Z_SAFE_HOME_HEIGHT)
+    # If we have no position data for Z, always drop (safe default).
+    z_now = get_z()
+    needs_drop = (z_now is None) or (z_now > Z_SAFE_HOME_HEIGHT)
 
     if needs_drop:
         console.print(
             f"[bold yellow]Z-SAFETY:[/bold yellow] Dropping Z to {Z_PREDROP_HEIGHT} mm "
             f"before homing (last known Z = "
-            f"{'unknown' if _last_known_z is None else f'{_last_known_z:.1f} mm'})..."
+            f"{'unknown' if z_now is None else f'{z_now:.1f} mm'})..."
         )
         # Use absolute mode for the safety drop regardless of current mode
         send_gcode("G90")
         send_gcode(f"G1 Z{Z_PREDROP_HEIGHT} F{Z_PREDROP_SPEED}")
         send_gcode("M400")   # Wait for move to complete before homing
-        set_last_known_z(Z_PREDROP_HEIGHT)
+        set_axis("z", Z_PREDROP_HEIGHT)
     else:
         console.print(
-            f"[dim]Z at {_last_known_z:.1f} mm — within safe range, no pre-drop needed.[/dim]"
+            f"[dim]Z at {z_now:.1f} mm — within safe range, no pre-drop needed.[/dim]"
         )
 
     # Home all axes simultaneously in one command so X/Y/Z move together.
@@ -483,8 +544,13 @@ def safe_home_all_axes():
     console.print("[bold cyan]Homing all axes simultaneously (G28 X Y Z)...[/bold cyan]")
     send_gcode("G28 X Y Z", timeout=180)
 
-    # After homing, position is 0,0,0 by firmware convention
-    set_last_known_z(0.0)
+    # After homing the firmware resets X/Y/Z to 0.  B/C (extrusion) are not
+    # homed so their absolute positions are now unknown relative to any
+    # previous reference — mark them as unknown.
+    set_axis("x", 0.0)
+    set_axis("y", 0.0)
+    set_axis("z", 0.0)
+    clear_axes("b", "c")
 
 
 # ============================================================
@@ -588,10 +654,10 @@ def connect_to_printer():
         drain_queue()
         send_gcode("M115", timeout=10)
 
-        # After a fresh connect we don't know where Z is — mark as unknown so
-        # the next G28 call unconditionally performs the safety pre-drop.
-        # clear_last_known_z() also persists this to disk immediately.
-        clear_last_known_z()
+        # After a fresh connect we don't know where any axis is — mark all as
+        # unknown so the next G28 unconditionally performs the safety pre-drop.
+        # clear_axes() also persists this to disk immediately.
+        clear_axes()
 
         console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
         time.sleep(1)
@@ -642,8 +708,8 @@ def reset_printer_board():
         printer_conn.reset_output_buffer()
         drain_queue()
 
-        # After a board reset, Z position is unknown — persist that fact.
-        clear_last_known_z()
+        # After a board reset, all axis positions are unknown — persist that.
+        clear_axes()
 
         console.print("[bold green]Printer reset complete. Give it a moment to finish booting.[/bold green]")
         time.sleep(2)
@@ -766,13 +832,13 @@ def interactive_jog_menu():
                             send_gcode(cmd, wait_for_ok=False)
                             in_flight_commands += 1
 
-                        # Track Z position changes during jogging (relative mode)
-                        # and persist each change immediately.
-                        if dz != 0:
-                            if _last_known_z is not None:
-                                set_last_known_z(_last_known_z + dz)
-                            else:
-                                clear_last_known_z()
+                        # Update all moved axes (jogging is always relative).
+                        # offset_axis() silently skips axes that are still None
+                        # so we never fabricate a position from thin air.
+                        if dx != 0: offset_axis("x", dx)
+                        if dy != 0: offset_axis("y", dy)
+                        if dz != 0: offset_axis("z", dz)
+                        if de != 0: offset_axis(EXTRUSION_AXIS.lower(), de)
 
                         last_command_time = time.time()
 
@@ -814,7 +880,7 @@ def manual_control_menu():
         border_style="cyan"
     ))
 
-    # Track whether we're currently in relative mode so Z tracking stays accurate
+    # Track whether we're currently in relative mode so axis tracking stays accurate
     current_mode_relative = False
 
     while True:
@@ -846,28 +912,41 @@ def manual_control_menu():
                 console.print(f"[bold red]Homing error:[/bold red] {e}")
             continue
 
-        # Track mode switches so Z position tracking stays valid
+        # Track mode switches so position tracking stays valid
         if cmd_upper.strip() == "G91":
             current_mode_relative = True
         elif cmd_upper.strip() == "G90":
             current_mode_relative = False
 
-        # Update _last_known_z from manual G1/G0 commands and persist each
+        # G92 (set position / re-zero): update the state table to match
+        # whatever the firmware is now told to believe.
+        if cmd_upper.startswith("G92"):
+            for axis in AXES:
+                m = re.search(rf'{axis.upper()}([-\d.]+)', cmd_upper)
+                if m:
+                    try:
+                        set_axis(axis, float(m.group(1)))
+                    except ValueError:
+                        pass
+            # G92 with no arguments zeros all axes in the firmware
+            if not any(re.search(rf'{a.upper()}[-\d.]', cmd_upper) for a in AXES):
+                for a in AXES:
+                    set_axis(a, 0.0)
+
+        # Update axis positions from manual G0/G1 commands and persist each
         # change immediately so a crash cannot leave the state stale.
         if cmd_upper.startswith(("G0", "G1")):
-            z_match = re.search(r'Z([-\d.]+)', cmd_upper)
-            if z_match:
-                try:
-                    z_val = float(z_match.group(1))
-                    if current_mode_relative:
-                        if _last_known_z is not None:
-                            set_last_known_z(_last_known_z + z_val)
+            for axis in AXES:
+                m = re.search(rf'{axis.upper()}([-\d.]+)', cmd_upper)
+                if m:
+                    try:
+                        val = float(m.group(1))
+                        if current_mode_relative:
+                            offset_axis(axis, val)
                         else:
-                            clear_last_known_z()
-                    else:
-                        set_last_known_z(z_val)
-                except ValueError:
-                    pass
+                            set_axis(axis, val)
+                    except ValueError:
+                        pass
 
         try:
             if cmd_upper.startswith("G29"):
@@ -1476,13 +1555,13 @@ def review_settings_before_translation(filename):
 # ============================================================
 
 def main():
-    global printer_listener_running, _last_known_z
+    global printer_listener_running
 
     # -------------------------------------------------------
-    # Restore Z state from disk on startup so the safety guard
-    # has a reference even after a crash or power outage.
+    # Restore all axis positions from disk on startup so the
+    # safety guard has a reference even after a crash or outage.
     # -------------------------------------------------------
-    _last_known_z = load_z_state()
+    load_axis_state()
 
     while True:
         console.clear()
@@ -1496,10 +1575,19 @@ def main():
                        if loaded_filepath else "[dim]None[/dim]")
         console.print(f"Loaded File:    {file_status}")
 
-        # Show persisted Z so the operator can confirm it looks sane
-        z_display = (f"[bold yellow]{_last_known_z:.2f} mm[/bold yellow]"
-                     if _last_known_z is not None else "[dim]Unknown (will pre-drop before homing)[/dim]")
-        console.print(f"Last Known Z:   {z_display}\n")
+        # Show all axis positions so the operator can verify state at a glance.
+        # Unknown axes are shown in dim red with a note that homing will pre-drop.
+        axis_parts = []
+        for a in AXES:
+            v = get_axis(a)
+            if v is not None:
+                axis_parts.append(f"[bold yellow]{a.upper()}={v:.2f}[/bold yellow]")
+            else:
+                axis_parts.append(f"[dim red]{a.upper()}=?[/dim red]")
+        console.print(f"Axis Positions: {' '.join(axis_parts)}"
+                      + ("" if get_z() is not None else
+                         "  [dim](Z unknown — will pre-drop before homing)[/dim]"))
+        console.print()
 
         console.print("[bold yellow]--- Main Menu ---[/bold yellow]")
 
